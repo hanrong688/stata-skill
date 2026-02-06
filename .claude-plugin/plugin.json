@@ -1,0 +1,8 @@
+{
+  "name": "stata",
+  "description": "Comprehensive Stata reference for writing correct Stata code — covers syntax, data management, econometrics, causal inference, graphics, Mata, and 20 community packages.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Dylan Moore"
+  }
+}
