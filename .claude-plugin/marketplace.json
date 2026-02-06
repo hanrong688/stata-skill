@@ -1,0 +1,11 @@
+{
+  "name": "stata",
+  "display_name": "Stata",
+  "description": "Comprehensive Stata reference for writing correct Stata code — covers syntax, data management, econometrics, causal inference, graphics, Mata, and 17+ community packages.",
+  "skills": [
+    {
+      "name": "stata",
+      "path": "./skills/stata"
+    }
+  ]
+}
