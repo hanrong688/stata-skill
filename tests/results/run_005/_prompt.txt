@@ -1,0 +1,9 @@
+
+Using `sysuse auto`, write a do-file that:
+1. Define a local macro `outcomes` containing `price mpg weight`
+2. Define a local macro `controls` containing `i.foreign trunk turn`
+3. Loop over each outcome, regressing it on the controls with robust SEs
+4. Store each set of estimates with a meaningful name
+5. After the loop, create a comparison table using `estimates table`
+6. Then write a small Stata program `summarize_by` that takes a varlist and a `by()` option, and displays `tabstat` of those variables by the grouping variable
+

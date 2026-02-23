@@ -508,7 +508,28 @@ summarize income [fweight = sampwgt]
 svy: mean income
 ```
 
-**5. Misusing replicate weights:**
+**5. Missing values silently alter the subpopulation:**
+Listwise deletion in `svy` commands can silently shrink the realized subpopulation when covariates have missing values. You may think you are estimating on the full sample, but missingness in any variable drops those observations without warning.
+```stata
+* Check missingness before estimation
+misstable summarize income education experience age
+
+* Compare N in output to expected subpopulation size
+svy: regress income education experience age
+```
+
+**6. `svy` commands set their own VCE — you cannot override it:**
+The variance estimation method is locked at `svyset` time. Specifying `vce()` on a `svy:` command is an error.
+```stata
+* WRONG -- vce() is not allowed on svy: commands
+svy: regress y x, vce(robust)
+
+* RIGHT -- set VCE at svyset time
+svyset psu [pweight = sampwgt], strata(stratum) vce(linearized)
+svy: regress y x
+```
+
+**7. Misusing replicate weights:**
 ```stata
 * WRONG -- treating replicate weights as separate analyses
 foreach var of varlist brr_* {

@@ -1,0 +1,9 @@
+
+Using `sysuse auto`:
+1. Compute the mean price and mean mpg by `foreign` group using `collapse`
+2. Merge these group means back onto the original (uncollapsed) dataset as new variables `mean_price_group` and `mean_mpg_group`
+3. Create a "demeaned" price variable: each car's price minus its group mean
+4. Do this using the `preserve`/`restore` pattern with a `tempfile`
+
+This is a common pattern — compute group statistics and merge them back for within-group analysis.
+

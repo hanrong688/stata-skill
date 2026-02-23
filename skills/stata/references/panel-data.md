@@ -158,6 +158,32 @@ hausman fixed random
 // p >= 0.05: Fail to reject -> RE acceptable
 ```
 
+### Hausman Gotchas
+
+**"Not positive definite" error:** The Hausman test requires V_fe - V_re to be positive definite. When it fails:
+```stata
+hausman fe re, sigmamore     // Use RE sigma for both (most common fix)
+hausman fe re, sigmaless     // Use FE sigma for both
+
+// Or use the robust overidentification test (works with clustered SEs too)
+// ssc install xtoverid
+xtreg ln_wage age tenure, re
+xtoverid
+```
+
+**Hausman requires default SEs:** The classic Hausman test is invalid with robust or clustered standard errors. Estimate both models with default SEs for the test, then re-estimate your chosen model with clustered SEs for inference:
+```stata
+// Step 1: Hausman test with default SEs
+quietly xtreg ln_wage age tenure, fe
+estimates store fe_default
+quietly xtreg ln_wage age tenure, re
+estimates store re_default
+hausman fe_default re_default
+
+// Step 2: Re-estimate chosen model with clustered SEs
+xtreg ln_wage age tenure, fe vce(cluster idcode)
+```
+
 ### Mundlak Test (Alternative)
 Include group means of time-varying regressors in RE model. If jointly significant, FE is preferred.
 

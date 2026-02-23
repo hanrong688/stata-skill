@@ -18,6 +18,38 @@ foreign_data = st_data(., ("price", "mpg"), "foreign")
 X = st_data(., (1, 2, 3))
 ```
 
+### Critical: Missing Values in Mata
+
+Mata's `mean()`, `variance()`, `correlation()`, and similar aggregate functions **propagate missing values silently** -- they do NOT exclude missings like Stata's `summarize` does. A single missing value in a column makes `mean()` return `.` for that column with no warning.
+
+**Always filter missings before computing:**
+
+```mata
+// WRONG: if any value in X is missing, mean() returns "."
+result = mean(X)
+
+// RIGHT: drop rows with any missing values
+Xclean = select(X, rowmissing(X) :== 0)
+result = mean(Xclean)
+
+// RIGHT: drop missings in a single column
+x = select(x, missing(x) :== 0)
+result = mean(x)
+```
+
+**Missing-value detection functions:**
+
+| Function | Returns |
+|---|---|
+| `missing(x)` | 1 if scalar x is missing, element-wise for matrices |
+| `hasmissing(X)` | 1 if any element of X is missing |
+| `rowmissing(X)` | Column vector: count of missings per row |
+| `colmissing(X)` | Row vector: count of missings per column |
+
+**Tip:** Check `hasmissing()` early and handle it explicitly rather than debugging silent wrong answers downstream.
+
+---
+
 ## st_view() -- Create View (No Copy)
 
 Creates a reference into Stata data. **Changes to the view modify Stata data.** More memory-efficient than st_data().
@@ -252,8 +284,18 @@ st_store(., idx, runiform(st_nobs(), 1))
 ```mata
 void create_zscores(string scalar varname, string scalar newvar) {
     real vector data, zscores
+    real scalar mu, sd
     data = st_data(., varname)
-    zscores = (data :- mean(data)) :/ sqrt(variance(data))
+
+    // Filter missings -- mean()/variance() propagate them silently
+    // (see "Critical: Missing Values in Mata" above)
+    real vector clean
+    clean = select(data, missing(data) :== 0)
+    mu = mean(clean)
+    sd = sqrt(variance(clean))
+
+    // Apply to full vector (missings in data stay missing in output)
+    zscores = (data :- mu) :/ sd
     st_addvar("double", newvar)
     st_store(., newvar, zscores)
 }

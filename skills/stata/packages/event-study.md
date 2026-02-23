@@ -1,21 +1,23 @@
 # Event Study Packages in Stata
 
-## Table of Contents
-1. [Core Packages Overview](#core-packages-overview)
-2. [Installation and Setup](#installation-and-setup)
-3. [eventdd: Dynamic Difference-in-Differences](#eventdd-dynamic-difference-in-differences)
-4. [eventstudyinteract: Sun & Abraham Estimator](#eventstudyinteract-sun-abraham-estimator)
-5. [Creating Event Study Plots](#creating-event-study-plots)
-6. [Pre-Trend Testing](#pre-trend-testing)
-7. [Binning Endpoints](#binning-endpoints)
-8. [Heterogeneous Treatment Effects](#heterogeneous-treatment-effects)
-9. [Standard Errors and Clustering](#standard-errors-and-clustering)
-10. [Integration with did_multiplegt](#integration-with-did_multiplegt)
-11. [Integration with csdid](#integration-with-csdid)
-12. [Comparison of Event Study Approaches](#comparison-of-event-study-approaches)
-13. [Publication-Quality Plots](#publication-quality-plots)
-14. [Complete Workflow Example](#complete-workflow-example)
-15. [Best Practices and Pitfalls](#best-practices-and-pitfalls)
+## Contents
+
+- [Core Packages Overview](#core-packages-overview)
+- [Installation and Setup](#installation-and-setup)
+- [eventdd: Dynamic Difference-in-Differences](#eventdd-dynamic-difference-in-differences)
+- [eventstudyinteract: Sun & Abraham Estimator](#eventstudyinteract-sun--abraham-estimator)
+- [Creating Event Study Plots](#creating-event-study-plots)
+- [Pre-Trend Testing](#pre-trend-testing)
+- [Binning Endpoints](#binning-endpoints)
+- [Heterogeneous Treatment Effects](#heterogeneous-treatment-effects)
+- [Standard Errors and Clustering](#standard-errors-and-clustering)
+- [Integration with did_multiplegt](#integration-with-did_multiplegt)
+- [Integration with csdid](#integration-with-csdid)
+- [Comparison of Event Study Approaches](#comparison-of-event-study-approaches)
+- [Publication-Quality Plots](#publication-quality-plots)
+- [Complete Workflow Example](#complete-workflow-example)
+- [Best Practices and Pitfalls](#best-practices-and-pitfalls)
+- [References](#references)
 
 ---
 
@@ -971,6 +973,19 @@ forvalues k = 5(-1)1 {
 forvalues k = 5(-1)2 {
     gen lead`k' = (rel_time == -`k')
 }
+
+// WRONG: Pure event-time dummies with uniform treatment timing
+// When all treated units share the same treatment_year, these are
+// perfectly collinear with year FEs — coefficients are dropped or wrong.
+gen lead5 = (rel_time == -5)   // collinear with year FE
+gen lead4 = (rel_time == -4)   // collinear with year FE
+reghdfe outcome lead5 lead4 lead3 lead2 lag0 lag1, absorb(unit_id year)
+// RIGHT: Interact event-time with treatment group indicator
+gen treated = !missing(treatment_year)
+reghdfe outcome ib(-1).rel_time#1.treated, ///
+    absorb(unit_id year) vce(cluster unit_id)
+// This only matters for uniform timing; staggered designs break the
+// collinearity because rel_time maps to different calendar years per cohort.
 ```
 
 ### Quick Reference: Package Syntax

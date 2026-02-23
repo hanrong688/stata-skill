@@ -1,0 +1,24 @@
+# Task 02: Merge & Reshape Workflow
+
+## Task Prompt
+
+I have panel data on students' test scores in wide format where each year is a separate column (score2018, score2019, score2020). Write Stata code to:
+1. Simulate this wide dataset with 100 students using `set seed 42` and `set obs`
+2. Reshape it to long format (student-year panel)
+3. Create a separate dataset with student demographics (gender, school_id)
+4. Merge the demographics onto the panel data using a 1:m merge
+5. Verify the merge worked — tabulate `_merge` and assert all matched
+6. Drop `_merge` and save
+
+## Capabilities Exercised
+
+- **Data management:** `reshape long`, `merge m:1` or `1:m`
+- **Gotcha: merge always check _merge** — must tabulate and verify
+- **Programming basics:** `set seed`, `set obs`, `generate` with random data
+- **Variables/operators:** creating simulated data, variable types
+
+## Reference Files
+
+- references/data-management.md
+- references/programming-basics.md
+- references/variables-operators.md

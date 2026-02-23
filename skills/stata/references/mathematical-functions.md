@@ -57,6 +57,16 @@ rt(df)              // Student's t
 rexponential(b)     // Exponential
 ```
 
+**Gotcha -- SD vs. variance in `rnormal()`:** Mathematical notation writes N(mu, sigma^2) where the second parameter is variance. Stata's `rnormal(m, s)` takes **standard deviation**, not variance. For N(0, 4) errors, use `rnormal(0, 2)` since SD = sqrt(4) = 2.
+
+```stata
+// CORRECT: generate N(0, 4) errors — SD = sqrt(4) = 2
+generate e = rnormal(0, 2)
+
+// WRONG: this generates N(0, 16) errors, not N(0, 4)
+generate e = rnormal(0, 4)
+```
+
 **Practical patterns:**
 ```stata
 set seed 1234

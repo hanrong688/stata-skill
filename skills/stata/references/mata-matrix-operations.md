@@ -63,10 +63,16 @@ sqrt(A); exp(A); log(A); abs(A); floor(A); ceil(A)
 
 ### Summary Functions
 
+**Warning:** These functions propagate missing values silently -- they do NOT
+exclude missings. A single `.` in a column makes `mean()` return `.` for that
+column. Filter first with `select(X, rowmissing(X) :== 0)`.
+See mata-data-access.md > "Critical: Missing Values in Mata" for details.
+
 ```mata
-sum(A)                          // All elements
-colsum(A); rowsum(A)
-mean(A)                         // Column means
+sum(A)                          // All elements (. if any missing)
+colsum(A); rowsum(A)            // (. propagates per column/row)
+mean(A)                         // Column means (. if any missing in col)
+variance(A)                     // Covariance matrix (. if any missing)
 min(A); max(A)
 colmin(A); colmax(A)
 ```

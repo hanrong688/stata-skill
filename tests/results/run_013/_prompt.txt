@@ -1,0 +1,10 @@
+
+Using `webuse lutkepohl2`:
+1. Declare the time series structure with `tsset`
+2. Plot the `ln_inv` series over time
+3. Test for a unit root using the Augmented Dickey-Fuller test (`dfuller`)
+4. If non-stationary, take first differences and re-test
+5. Fit an ARIMA(1,1,1) model to `ln_inv`
+6. Check residual diagnostics (autocorrelation)
+7. Produce a 4-period ahead forecast and plot it
+

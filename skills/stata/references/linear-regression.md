@@ -75,6 +75,17 @@ estimates store model2
 estimates table model1 model2, se stats(N r2 r2_a)
 ```
 
+**`estimates table` valid options:** `b()` (format coefficients), `se()` (format SEs),
+`star()` (significance stars, e.g. `star(.05 .01 .001)`), `stats()` (scalar statistics),
+`modelwidth()` (column width). That is the complete set — `title()` is NOT a valid option
+for `estimates table`. Use `esttab` from the `estout` package for richer formatting:
+
+```stata
+// esttab equivalent with title and more (requires: ssc install estout)
+esttab model1 model2, se stats(N r2 r2_a) title("Price Models") star(* 0.05 ** 0.01 *** 0.001)
+```
+See `packages/estout.md` for full `esttab`/`estout` reference.
+
 ### Accessing Stored Results
 ```stata
 ereturn list              // List all stored results

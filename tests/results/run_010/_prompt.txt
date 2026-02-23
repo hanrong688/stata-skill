@@ -1,0 +1,9 @@
+
+Write Stata code that:
+1. Creates a small dataset with messy data: names with extra whitespace, inconsistent capitalization of a gender variable ("Male", "MALE", "male", "Female", "FEMALE"), dates as strings in "MM/DD/YYYY" format, and an income variable stored as string with dollar signs and commas ("$45,000")
+2. Clean the name variable: trim whitespace, proper case
+3. Standardize gender to lowercase and create a numeric encoded version
+4. Parse the date strings into proper Stata date format with `%td` display
+5. Clean the income string: strip `$` and `,`, convert to numeric with `destring`
+6. Verify all conversions worked — check for missing values introduced during cleaning
+

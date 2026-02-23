@@ -2,49 +2,10 @@
 name: stata
 description: >
   Comprehensive Stata reference for writing correct .do files, data management,
-  econometrics, causal inference, graphics, Mata programming, and 17+ community
+  econometrics, causal inference, graphics, Mata programming, and 20 community
   packages (reghdfe, estout, did, rdrobust, etc.). Covers syntax, options,
   gotchas, and idiomatic patterns. Use this skill whenever the user asks you to
   write, debug, or explain Stata code.
-triggers:
-  - stata
-  - .do file
-  - do-file
-  - regress
-  - regression in stata
-  - panel data
-  - fixed effects
-  - reghdfe
-  - estout
-  - esttab
-  - outreg2
-  - difference-in-differences
-  - event study
-  - propensity score
-  - rdrobust
-  - synthetic control
-  - xtset
-  - merge
-  - reshape
-  - collapse
-  - egen
-  - ssc install
-  - mata
-  - putexcel
-  - putdocx
-  - graph export
-  - survival analysis
-  - heckman
-  - tobit
-  - logit
-  - probit
-  - arima
-  - var model
-  - gmm estimation
-  - bootstrap stata
-  - survey weights
-  - multiple imputation
-  - lasso stata
 ---
 
 # Stata Skill
@@ -320,6 +281,10 @@ reghdfe y x1 x2, absorb(panelid timevar) vce(cluster panelid)
 gen post = (year >= treatment_year)
 gen treat_post = treated * post
 regress y treated post treat_post, vce(cluster id)
+
+* Event study (uniform timing — must interact with treatment group)
+reghdfe y ib(-1).rel_time#1.treated, absorb(id year) vce(cluster id)
+testparm *.rel_time#1.treated   // pre-trend test
 
 * Modern staggered DiD (Callaway & Sant'Anna)
 csdid y x1 x2, ivar(id) time(year) gvar(first_treat) agg(event)

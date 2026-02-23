@@ -159,7 +159,7 @@ zinb depvar indepvars, inflate(predictors_of_zeros)
 ```stata
 // Average marginal effects (AME)
 logit union age grade south
-margins, dydx(*)
+margins, dydx(*)                      // Do NOT add 'post' unless you need to test margins
 
 // At specific values
 margins, dydx(*) at(age=30 grade=12)
@@ -275,6 +275,7 @@ lrtest model1 model2                  // Likelihood ratio test
 - Ignoring overdispersion in count models
 - Using mlogit for ordered outcomes
 - Forgetting `ll()` in tobit when censored at 0
+- Using `margins, post` unnecessarily — `post` replaces `e()` with margins results, forcing re-estimation before any further post-estimation (`estat`, `lroc`, `predict`, or another `margins` call). Only use `post` when you need to run `test` or `lincom` on the margins themselves.
 
 ### Useful User-Written Commands
 

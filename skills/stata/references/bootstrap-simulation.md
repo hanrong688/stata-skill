@@ -61,7 +61,7 @@ program define simreg, rclass
     drop _all
     set obs 200
     generate x = rnormal(0, 1)
-    generate y = 2 + 3*x + rnormal(0, 2)
+    generate y = 2 + 3*x + rnormal(0, 2)   // SD=2, so errors ~ N(0, 4)
     regress y x
     return scalar b1 = _b[x]
     return scalar se1 = _se[x]
@@ -275,6 +275,7 @@ bootstrap, cluster(idcode) idcluster(newid) reps(400): ///
 3. Not clustering bootstrap for panel data
 4. Assuming normality without checking bootstrap distribution
 5. Forgetting to `preserve`/`restore` data in custom programs
+6. Using variance instead of SD in `rnormal()` -- N(0, sigma^2) requires `rnormal(0, sqrt(sigma^2))`, not `rnormal(0, sigma^2)`
 
 ### Related Commands
 

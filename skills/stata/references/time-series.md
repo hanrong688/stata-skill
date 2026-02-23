@@ -59,6 +59,8 @@ summarize D.gdp D.inflation
 generate gdp_pct_change = D.gdp / L.gdp * 100
 ```
 
+**Gotcha — differencing creates missing values:** `D.y` is missing (`.`) for the first observation because there is no prior value to subtract. Higher-order differences lose more observations (`D2.y` loses the first two, etc.). This affects `dfuller` (which differences internally — be aware your effective sample shrinks), `generate` (the new variable will have leading missings), and `if` conditions (missings are excluded by default). ARIMA handles differencing internally so no manual guard is needed when using `arima D.y, ...`.
+
 ---
 
 ## ARIMA Models

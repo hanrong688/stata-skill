@@ -160,6 +160,47 @@ twoway (scatter estimate event_time) ///
 restore
 ```
 
+### Event Study with Uniform Treatment Timing
+
+When all treated units receive treatment at the same time (no staggered adoption), pure event-time dummies like `gen lead5 = (rel_time == -5)` are **collinear with year fixed effects** because every treated unit has the same mapping from calendar year to relative time. The regression will either drop coefficients or produce meaningless estimates.
+
+The fix is to interact event-time indicators with a treatment group indicator. This gives variation within each calendar year (treated vs. control) that year FEs do not absorb.
+
+```stata
+* ----- WRONG: pure event-time dummies with uniform timing -----
+* These are perfectly collinear with year FEs when all treated units
+* share the same treatment_year (e.g., treatment_year == 2010 for all).
+gen lead5 = (rel_time == -5)
+gen lead4 = (rel_time == -4)
+* ...
+reghdfe outcome lead5 lead4 lead3 lead2 lag0 lag1 lag2, ///
+    absorb(unit_id year) vce(cluster unit_id)
+* Result: coefficients dropped or estimates are nonsensical
+
+* ----- RIGHT: interact event-time with treatment group -----
+* Option A: Manual interaction dummies
+gen treated = !missing(treatment_year)
+forvalues k = 5(-1)2 {
+    gen lead`k' = treated * (rel_time == -`k')
+}
+forvalues k = 0/5 {
+    gen lag`k' = treated * (rel_time == `k')
+}
+reghdfe outcome lead5-lead2 lag0-lag5, ///
+    absorb(unit_id year) vce(cluster unit_id)
+
+* Option B: Factor variable notation (concise)
+gen treated = !missing(treatment_year)
+reghdfe outcome ib(-1).rel_time#1.treated, ///
+    absorb(unit_id year) vce(cluster unit_id)
+
+* Pre-trend test (works with either approach)
+testparm lead*           // Option A
+testparm *b(-1).rel_time#1.treated, equal  // Option B: test pre-period interactions
+```
+
+**Why pure dummies work in staggered designs:** When treatment timing varies across units, `rel_time == -5` maps to *different* calendar years for different cohorts, so the event-time dummies are not collinear with year FEs. Never-treated units typically have `rel_time` set to a sentinel value like -999, further breaking the collinearity.
+
 ### Event Study with Binned Endpoints
 
 ```stata

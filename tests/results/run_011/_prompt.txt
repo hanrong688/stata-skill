@@ -1,0 +1,10 @@
+
+Using `sysuse auto`:
+1. Bootstrap the coefficient on `weight` from a regression of `price` on `weight` and `mpg` (500 replications, set seed for reproducibility)
+2. Compare the bootstrapped SE to the conventional robust SE
+3. Then write a Monte Carlo simulation program that:
+   - Generates data from a known DGP: y = 2 + 3*x + e where x ~ N(0,1) and e ~ N(0,4), n=100
+   - Runs OLS and stores the coefficient on x and its 95% CI coverage
+   - Repeats 1000 times using `simulate`
+   - Reports the mean coefficient estimate, mean SE, and empirical coverage rate
+
