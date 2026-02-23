@@ -6,7 +6,7 @@ A complete workflow for porting a Python or R statistical package into a native 
 
 Before writing any code, thoroughly understand the source package.
 
-1. **Check for a C/C++ backend first.** Many R packages (and some Python packages) have compiled backends. In R, check the `src/` directory for `.c`, `.cpp`, or `.h` files. In Python, look for Cython (`.pyx`), C extensions, or `cffi`/`ctypes` bindings. **If a C/C++ backend exists, the recommended approach is to wrap that code directly in a Stata plugin** rather than reimplementing the algorithm from scratch. This gives you identical output (same code, not a reimplementation), the same performance, far less code to write, and easier maintenance when the upstream package is updated. See "Wrapping an Existing C++ Backend" below.
+1. **Check for a C/C++ backend or standalone library first.** Many R packages (and some Python packages) have compiled backends — in R, check `src/` for `.c`/`.cpp`/`.h` files; in Python, look for Cython (`.pyx`), C extensions, or `cffi`/`ctypes` bindings. Also search for standalone C++ libraries that implement the same algorithm (e.g., rapidfuzz-cpp for string matching, Eigen for linear algebra). **If any C/C++ implementation exists, wrap it** rather than reimplementing the algorithm from scratch. This gives you identical output (same code path), the same performance, far less code to write, and easier maintenance. Vendor all dependencies — header-only or otherwise — and statically link everything for all platforms. Binary size is not a concern. See "Wrapping an Existing C++ Backend" below.
 
 2. **Read the source package structure.** Identify all public-facing functions, their signatures, inputs, outputs, and options. Map Python classes/functions to what will become Stata commands.
 
@@ -47,11 +47,11 @@ Three tiers of implementation. Choose based on what the source package provides 
 - **Why this is better than reimplementing:** Near-identical output (same core code path as the original — minor differences from compiler flags or RNG seeding are possible), same performance, far less code to write, and easier to update when the upstream package changes. You only write the glue between Stata's SDK and the library's API.
 
 ### Tier 3: Plugin from Scratch (when no compiled backend exists)
-- **When:** The source is pure Python/R with no compiled backend, or the algorithm is simple enough that a clean implementation is straightforward.
-- **How:** Write C or C++ code using Stata's plugin SDK. C is the simpler choice for straightforward numerical algorithms (arrays, loops, basic math). C++ is worth considering when the algorithm needs complex data structures, threading, or would benefit from `std::vector`/RAII for safety. See main SKILL.md for C patterns, `references/cpp_plugins.md` for C++.
+- **When:** The source is pure Python/R with no compiled backend, AND no standalone C++ library implements the algorithm.
+- **How:** Write C or C++ code using Stata's plugin SDK. See main SKILL.md for C patterns, `references/cpp_plugins.md` for C++.
 - **Mata is not recommended** for compute-heavy algorithms — it's significantly slower than C/C++ and adds a layer of complexity without meaningful benefit for plugin-class workloads.
 
-**Recommendation:** `.ado` for user interface + wrapped C++ or from-scratch C plugin for compute + native Stata commands for trivial methods (OLS, quantile regression). Always check for an existing C++ backend before writing from scratch.
+**Recommendation:** Always check for a C++ backend or standalone C++ library first. If one exists, wrap it (Tier 2) — this is faster to build, produces identical output, and is easier to maintain. Only fall back to Tier 3 when no compiled code exists to wrap.
 
 ## Wrapping an Existing C++ Backend
 
@@ -61,7 +61,8 @@ When the source package has a C/C++ backend, this is the recommended approach. Y
 
 - **R packages:** Check the `src/` directory in the package source (e.g., on GitHub or CRAN). Look for `.cpp`, `.c`, `.h` files. Many high-performance R packages use Rcpp and have their core algorithms in C++.
 - **Python packages:** Look for Cython (`.pyx`), C extensions (`_module.c`), or `cffi`/`ctypes` bindings. Some packages vendor C/C++ libraries.
-- **Header-only libraries:** Libraries like Eigen (linear algebra) are header-only — you just add `-I/path/to/eigen` at compile time. No separate linking needed.
+- **Standalone C++ libraries:** Many algorithms have standalone C++ implementations you can wrap directly. Examples: rapidfuzz-cpp (string matching), Eigen (linear algebra), nlohmann/json (JSON parsing). Search GitHub for `<algorithm-name> cpp` or `<algorithm-name> header-only`.
+- **Header-only libraries:** These are the easiest to wrap — vendor the headers into your `c_source/` directory and add `-I.` at compile time. No separate linking needed. The headers get compiled into your plugin binary.
 
 ### The Basic Pattern
 
@@ -91,7 +92,7 @@ See `references/cpp_plugins.md` for full platform-specific build commands (darwi
 | Aspect | C Plugin | C++ Plugin |
 |--------|----------|------------|
 | Compiler | `gcc` | `g++` (or `gcc -lstdc++`) |
-| Standard | `-std=c99` | `-std=c++11` or later |
+| Standard | `-std=c99` | `-std=c++11` or later (match library requirements) |
 | Entry point | `stata_call()` | `extern "C" { stata_call() }` |
 | SDK files | `stplugin.c` compiled as C | `stplugin.c` compiled as C (keep separate, compile with `gcc`) |
 | Header-only libs | N/A | `-I/path/to/headers` |
@@ -108,11 +109,13 @@ g++ -bundle -o myplugin.darwin-arm64.plugin stplugin.o wrapper.o
 
 | Scenario | Approach |
 |----------|----------|
-| Source has optimized C++ backend (e.g., grf, ranger) | **Wrap** — identical output, same speed, less code |
-| Simple algorithm (KNN, basic trees) | Either works — C from scratch may be cleaner |
-| No C/C++ backend exists (pure Python/R) | **Reimplement** in C or C++ |
-| C++ backend has massive dependency tree | Evaluate case by case — may need selective extraction |
-| Header-only C++ library (Eigen, nlohmann/json) | **Wrap** — just add `-I` include path, no linking needed |
+| Source has C++ backend (e.g., grf, ranger, Rcpp packages) | **Wrap** — identical output, same speed, less code |
+| Standalone C++ library exists (RapidFuzz, Eigen, etc.) | **Wrap** — vendor the headers/source, write thin glue |
+| Header-only C++ library | **Wrap** — just vendor headers and add `-I`, no linking needed |
+| No C/C++ backend or library exists (pure Python/R) | **Reimplement** in C or C++ |
+| C++ backend has massive dependency tree | Vendor what you need — binary size is not a concern |
+
+**The default is always to wrap when possible.** Reimplementing from scratch is only for cases where no compiled code exists. Binary size is irrelevant — statically link everything (`-static-libstdc++ -static-libgcc`) and ship all platforms.
 
 ### Advantages of Wrapping
 

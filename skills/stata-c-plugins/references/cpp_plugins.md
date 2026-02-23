@@ -1,22 +1,17 @@
 # C++ Plugins for Stata
 
-Practical guidance for building Stata plugins in C++ instead of C. The main SKILL.md covers the C approach, which is the simpler default. This file covers the cases where C++ is the better choice and the specific patterns you need.
+Practical guidance for building Stata plugins in C++. **Wrapping an existing C++ library is the primary use case** — if a C++ implementation of your algorithm exists, always wrap it rather than reimplementing from scratch. This file covers the patterns you need.
 
-## When C++ Is the Right Choice
+## When to Use C++
 
-- **An existing C++ implementation exists.** This is the obvious case. If you're translating an R package that has a C++ backend in `src/`, wrap it rather than reimplementing in C. You get near-identical output (same core code path — minor differences from compiler flags or RNG seeding are possible), same performance, less code.
-- **Complex data structures.** Trees, graphs, hash maps, priority queues — `std::map`, `std::unordered_map`, `std::priority_queue` are battle-tested. Writing your own in C is error-prone and slow to develop.
-- **Threading with `std::thread`/`std::async`.** Simpler than raw pthreads for many use cases, especially when each thread needs its own state.
-- **You want a C++ library.** Eigen for linear algebra, nlohmann/json for config parsing, etc. Header-only libraries are especially easy — just add `-I`.
+- **An existing C++ implementation exists.** This is the most common case and should always be your first check. If you're translating an R package that has a C++ backend in `src/`, or a standalone C++ library exists for the algorithm, wrap it. You get identical output (same code path), same performance, and a fraction of the code. **Do not reimplement in C when a C++ backend is available.**
+- **A standalone C++ library does what you need.** RapidFuzz for string matching, Eigen for linear algebra, nlohmann/json for config parsing, etc. Header-only libraries are especially easy — vendor the headers and add `-I`.
+- **Complex data structures.** Trees, graphs, hash maps, priority queues — `std::map`, `std::unordered_map`, `std::priority_queue` are battle-tested.
+- **Threading with `std::thread`/`std::async`.** Simpler than raw pthreads for many use cases.
 
-## When C Is Still Fine
+## When C Is Fine
 
-- Simple algorithms (a few hundred lines of logic)
-- Just arrays and loops, no complex data structures needed
-- No existing C++ code to leverage
-- The from-scratch C approach in the main SKILL.md covers everything you need
-
-Don't reach for C++ just because you can. C plugins are simpler to compile, produce smaller binaries, and have fewer cross-compilation issues.
+Use C only when no C++ backend or library exists and the algorithm is simple arrays-and-loops logic. The C approach in the main SKILL.md covers this case.
 
 ## The `extern "C"` Pattern
 
@@ -94,7 +89,7 @@ Key points:
 **Option 1 (recommended): Compile separately.**
 ```bash
 gcc -c -O3 -fPIC -DSYSTEM=APPLEMAC stplugin.c -o stplugin.o
-g++ -O3 -std=c++14 -fPIC -DSYSTEM=APPLEMAC -bundle -o plugin.plugin wrapper.cpp stplugin.o
+g++ -O3 -std=c++17 -fPIC -DSYSTEM=APPLEMAC -bundle -o plugin.plugin wrapper.cpp stplugin.o
 ```
 
 **Option 2: Include with `extern "C"` trick.**
@@ -139,13 +134,13 @@ Catch `std::bad_alloc` separately so you can return Stata's memory error code (9
 
 ## Compilation
 
-Use `g++` instead of `gcc` for the C++ files. `stplugin.c` must be compiled as C.
+Use `g++` instead of `gcc` for the C++ files. `stplugin.c` must be compiled as C. Use whatever `-std=c++` version the library requires (C++11, C++14, C++17 are all common — check the library's docs). The examples below use C++17.
 
 ### darwin-arm64 (Apple Silicon Mac)
 
 ```bash
 gcc -c -O3 -fPIC -DSYSTEM=APPLEMAC -arch arm64 stplugin.c -o stplugin.o
-g++ -O3 -std=c++14 -fPIC -DSYSTEM=APPLEMAC -arch arm64 -bundle \
+g++ -O3 -std=c++17 -fPIC -DSYSTEM=APPLEMAC -arch arm64 -bundle \
     -o myplugin.darwin-arm64.plugin wrapper.cpp stplugin.o -lm
 ```
 
@@ -153,7 +148,7 @@ g++ -O3 -std=c++14 -fPIC -DSYSTEM=APPLEMAC -arch arm64 -bundle \
 
 ```bash
 gcc -c -O3 -fPIC -DSYSTEM=APPLEMAC -target x86_64-apple-macos10.12 stplugin.c -o stplugin.o
-g++ -O3 -std=c++14 -fPIC -DSYSTEM=APPLEMAC -target x86_64-apple-macos10.12 -bundle \
+g++ -O3 -std=c++17 -fPIC -DSYSTEM=APPLEMAC -target x86_64-apple-macos10.12 -bundle \
     -o myplugin.darwin-x86_64.plugin wrapper.cpp stplugin.o -lm
 ```
 
@@ -161,7 +156,7 @@ g++ -O3 -std=c++14 -fPIC -DSYSTEM=APPLEMAC -target x86_64-apple-macos10.12 -bund
 
 ```bash
 gcc -c -O3 -fPIC -DSYSTEM=OPUNIX stplugin.c -o stplugin.o
-g++ -O3 -std=c++14 -fPIC -DSYSTEM=OPUNIX -shared \
+g++ -O3 -std=c++17 -fPIC -DSYSTEM=OPUNIX -shared \
     -static-libstdc++ -static-libgcc \
     -o myplugin.linux-x86_64.plugin wrapper.cpp stplugin.o -lm
 ```
@@ -176,7 +171,7 @@ Install the cross-compiler first: `brew install mingw-w64`.
 
 ```bash
 x86_64-w64-mingw32-gcc -c -O3 -DSYSTEM=STWIN32 stplugin.c -o stplugin.o
-x86_64-w64-mingw32-g++ -O3 -std=c++14 -DSYSTEM=STWIN32 -shared \
+x86_64-w64-mingw32-g++ -O3 -std=c++17 -DSYSTEM=STWIN32 -shared \
     -static-libstdc++ -static-libgcc \
     -o myplugin.windows-x86_64.plugin wrapper.cpp stplugin.o -lm
 ```
@@ -188,7 +183,7 @@ Note the Windows flags: `-static-libstdc++ -static-libgcc` statically links the 
 Just add the include path:
 
 ```bash
-g++ -O3 -std=c++14 -fPIC -DSYSTEM=APPLEMAC -arch arm64 -bundle \
+g++ -O3 -std=c++17 -fPIC -DSYSTEM=APPLEMAC -arch arm64 -bundle \
     -I./eigen -o myplugin.darwin-arm64.plugin wrapper.cpp stplugin.o -lm
 ```
 
@@ -198,15 +193,15 @@ No linking step needed for header-only libraries.
 
 No difference from C plugins. The output is a single `.plugin` binary per platform, same naming convention (`pluginname.platform.plugin`), same `.ado` wrapper, same `.pkg` distribution.
 
-- Header-only C++ libraries (Eigen, etc.) are compiled into the binary. No runtime dependency.
-- On Windows and Linux, use `-static-libstdc++ -static-libgcc` to avoid requiring C++ runtime DLLs/shared objects.
+- Header-only C++ libraries are compiled into the binary. No runtime dependency.
+- **Always use `-static-libstdc++ -static-libgcc` on Windows and Linux.** This statically links the C++ runtime so end users don't need anything installed. Do this for every C++ plugin, no exceptions.
 - Users cannot tell whether a plugin was written in C or C++. The `.plugin` file is opaque.
 - Same cascade loading pattern, same `net install` distribution.
-- Expected binary sizes: macOS ~200-300K, Linux ~2MB (static C++), Windows ~10-15MB (fully static). These are normal for C++ plugins.
+- **Binary size is not a concern.** Expected sizes: macOS ~100-300K, Linux ~1-2MB, Windows ~2-15MB (fully static). These are normal. Users care about correct results, not plugin file size. Ship all platforms with all dependencies statically linked.
 
 ## Wrapping an Existing C++ Library
 
-This is the main use case for C++ plugins. You have existing C++ code (from an R package's `src/` directory, a standalone library, etc.) and want to call it from Stata.
+**This is the primary use case for C++ plugins and should be your default approach.** If a C++ implementation exists — whether from an R package's `src/` directory, a standalone library, or a header-only library — wrap it. Do not reimplement the algorithm in C or C++ from scratch.
 
 ### Finding C++ Backends
 
@@ -286,9 +281,7 @@ But keep it simple. This is a Stata plugin, not a framework. Use the standard li
 
 ## Caveats
 
-- **C++ is a much larger language than C.** More features means more ways to make mistakes. If you don't need C++ features, stick with C.
-- **Template errors produce unreadable compiler output.** This is especially painful when using Eigen or other template-heavy libraries.
-- **Larger binaries** than equivalent C code, though rarely a practical concern for Stata plugins.
-- **Cross-compilation can be trickier.** The C++ standard library must be available for the target platform. `-static-libstdc++` on Windows handles this. On Linux/macOS it's usually fine.
+- **Template errors produce unreadable compiler output.** This is especially painful when using Eigen or other template-heavy libraries. Focus on the first error and fix it — later errors are often cascading noise.
+- **Always use `-static-libstdc++ -static-libgcc` on Windows and Linux** so users don't need a compatible C++ runtime. This is mandatory, not optional.
 - **Debugging is the same challenge as C plugins.** You still can't attach a debugger to Stata's plugin host. Use `SF_display()`, log files, and standalone test harnesses (see Debugging section in main SKILL.md).
 - **ABI compatibility matters.** If you compile the library with one compiler version and the wrapper with another, you can get silent corruption. Use the same compiler for everything.

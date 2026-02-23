@@ -33,6 +33,12 @@ skills/
     └── references/      # 5 reference files
 ```
 
+## Example Applications
+
+- **[stata-rapidfuzz](https://github.com/dylantmoore/stata-rapidfuzz)** — String similarity and fuzzy matching. Wraps the rapidfuzz-cpp header-only C++ library. Demonstrates the C++ wrapping workflow: vendoring headers, thin `extern "C"` glue, cross-platform static linking.
+- **[drf_stata](https://github.com/dylantmoore/drf_stata)** — Distributional Random Forests for Stata. Wraps the R `drf` package's C++ backend (lorismichel/drf). Demonstrates C++ wrapping with pthreads parallelism, XorShift RNG, and correlation-based validation against R.
+- **[microimpute_stata](https://github.com/dylantmoore/microimpute_stata)** — High-performance statistical imputation with C plugin acceleration. Multi-method package (QRF, KNN, Neural Network) demonstrating the full plugin lifecycle: dispatcher .ado, multiple C plugins, preserve/merge pattern, cross-platform builds.
+
 ## Conventions
 
 - SKILL.md files must stay under 500 lines (hard limit for skills)

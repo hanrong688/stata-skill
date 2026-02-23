@@ -31,7 +31,14 @@ Build high-performance C/C++ plugins for Stata. This skill covers the full lifec
 
 - **Pure Stata is fine** for operations that use native commands (`regress`, `qreg`, `matrix`). No plugin needed if Stata already has a command that does what you want.
 - **Plugins are warranted** when you need Python/C-equivalent speed: tree structures, neural nets, custom distance computations, anything with nested loops over observations. If performance matters, go straight to C/C++ — Mata is significantly slower for compute-heavy work.
-- **When translating a package that has a C++ backend** (many R packages do — check their `src/` directory), **wrap the existing C++ code** rather than reimplementing in C. This gives near-identical output, same performance, and less code to maintain. See `references/translation_workflow.md`.
+
+## Wrap First, Write From Scratch Second
+
+**When translating a package, always check for an existing C/C++ backend before writing any algorithm code.** Many R packages have C++ in `src/`. Many Python packages have Cython or vendored C/C++ libraries. Standalone C++ libraries exist for string matching, linear algebra, tree algorithms, and more.
+
+**If a C++ implementation exists, wrap it.** Do not reimplement the algorithm in C. Wrapping gives you identical output (same code path), production-grade performance, and a fraction of the code. The plugin is just a thin `extern "C"` glue layer between Stata's SDK and the library's API. Binary size is irrelevant — statically link everything (`-static-libstdc++ -static-libgcc`) and ship whatever size the binary turns out to be, even 10-15 MB on Windows. Users don't care about plugin file size; they care about correct results.
+
+See `references/cpp_plugins.md` for the full pattern and `references/translation_workflow.md` for the workflow. Working examples: [stata-rapidfuzz](https://github.com/dylantmoore/stata-rapidfuzz) (C++ wrapping), [drf_stata](https://github.com/dylantmoore/drf_stata) (C++ wrapping, R translation), [microimpute_stata](https://github.com/dylantmoore/microimpute_stata) (multi-plugin package).
 
 ## The Plugin SDK
 
@@ -242,7 +249,7 @@ Build for four platforms. Install the Windows cross-compiler first: `brew instal
 
 All platforms: `-O3 -fPIC` for release, add `-g -fsanitize=address` for development.
 
-**For C++ plugins:** use `g++` instead of `gcc` (or add `-lstdc++` to linker flags). Add `-std=c++11` or later. Header-only C++ libraries like Eigen can be bundled by adding their include path with `-I`.
+**For C++ plugins:** use `g++` instead of `gcc`. Add `-std=c++` at the version the library requires (check its docs — C++11, C++14, and C++17 are all common). Header-only C++ libraries can be vendored into `c_source/` and included with `-I.`. Always use `-static-libstdc++ -static-libgcc` on Windows and Linux.
 
 Naming convention: `pluginname.platform.plugin` (e.g., `qrf_plugin.darwin-arm64.plugin`).
 
