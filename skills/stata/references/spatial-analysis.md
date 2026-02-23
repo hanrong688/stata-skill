@@ -1,17 +1,18 @@
 # Spatial Analysis in Stata
 
-## Table of Contents
-1. [Spatial Data Structures](#spatial-data-structures)
-2. [Creating and Managing Shapefiles](#creating-and-managing-shapefiles)
-3. [Spatial Weights Matrices](#spatial-weights-matrices)
-4. [Spatial Autocorrelation](#spatial-autocorrelation)
-5. [Spatial Regression Models](#spatial-regression-models)
-6. [The spregress Command](#the-spregress-command)
-7. [Geographic Visualization](#geographic-visualization)
-8. [Distance Calculations](#distance-calculations)
-9. [Spatial Panel Data](#spatial-panel-data)
-10. [Geospatial File Formats](#geospatial-file-formats)
-11. [Practical Examples](#practical-examples)
+## Contents
+
+- [Spatial Data Structures](#spatial-data-structures)
+- [Creating and Managing Shapefiles](#creating-and-managing-shapefiles)
+- [Spatial Weights Matrices](#spatial-weights-matrices)
+- [Spatial Autocorrelation](#spatial-autocorrelation)
+- [Spatial Regression Models](#spatial-regression-models)
+- [The spregress Command](#the-spregress-command)
+- [Geographic Visualization](#geographic-visualization)
+- [Distance Calculations](#distance-calculations)
+- [Spatial Panel Data](#spatial-panel-data)
+- [Geospatial File Formats](#geospatial-file-formats)
+- [Practical Examples](#practical-examples)
 
 ---
 

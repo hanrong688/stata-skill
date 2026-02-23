@@ -38,6 +38,7 @@ skills/
 - **[stata-rapidfuzz](https://github.com/dylantmoore/stata-rapidfuzz)** — String similarity and fuzzy matching. Wraps the rapidfuzz-cpp header-only C++ library. Demonstrates the C++ wrapping workflow: vendoring headers, thin `extern "C"` glue, cross-platform static linking.
 - **[drf_stata](https://github.com/dylantmoore/drf_stata)** — Distributional Random Forests for Stata. Wraps the R `drf` package's C++ backend (lorismichel/drf). Demonstrates C++ wrapping with pthreads parallelism, XorShift RNG, and correlation-based validation against R.
 - **[microimpute_stata](https://github.com/dylantmoore/microimpute_stata)** — High-performance statistical imputation with C plugin acceleration. Multi-method package (QRF, KNN, Neural Network) demonstrating the full plugin lifecycle: dispatcher .ado, multiple C plugins, preserve/merge pattern, cross-platform builds.
+- **[ranger_stata](https://github.com/dylantmoore/ranger_stata)** — Random forests for Stata (regression, classification, probability, survival). Wraps the ranger C++ library via `initR()` API. Demonstrates 4-forest-type dispatching, save/load for prediction on new data, and extensive option passthrough (case weights, class weights, regularization, split rules).
 
 ## Conventions
 

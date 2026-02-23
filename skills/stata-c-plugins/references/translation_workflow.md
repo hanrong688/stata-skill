@@ -14,10 +14,7 @@ Before writing any code, thoroughly understand the source package.
 
 4. **Check the source license.** The translated package inherits licensing obligations. MIT and BSD allow any re-use. GPL requires the Stata package to also be GPL. If the source is proprietary or has no license, get permission before translating.
 
-5. **Decide what to translate.** Not everything needs to come over. Prioritize:
-   - Core algorithms that users actually need
-   - Features that are tractable to implement in Stata/C
-   - Skip: visualization, I/O utilities, Python-specific abstractions
+5. **Default: translate ALL features and options.** The goal is full feature parity with the source package. Do not defer features unless they are fundamentally impossible in Stata (e.g., interactive visualization, language-specific I/O utilities). If a feature presents implementation difficulty, flag it in your plan with a concrete explanation of the challenge — but still plan to implement it. "This is hard" is not a reason to skip; "Stata has no concept of X" might be. Every option, parameter, and mode the original package exposes should be available in the Stata version.
 
 6. **Pin the source package version.** Create `requirements.txt` (Python) or record the exact package version (R) so reference test data can be reproduced later. If the source changes, your tests become meaningless.
 
@@ -176,9 +173,18 @@ Pin the exact source package version so results are reproducible.
 
 Always compare against both the **source implementation** and **known ground truth** when possible. Matching the source perfectly is necessary but not sufficient — both implementations could be wrong in the same way.
 
+### Feature Coverage Tests
+
+Every feature and option from the original package must have at least one dedicated test verifying:
+1. **Functionality** — the feature runs without error and produces reasonable output
+2. **Fidelity** — the output matches the source package (within tolerance appropriate to the algorithm)
+
+This means if the original package has 15 options, the test suite should exercise all 15, not just the 5 easiest ones. Generate reference data from the source package for each feature/option combination that affects output.
+
 ### Integration and Stress Tests
 
 - Test every feature end-to-end (`if`/`in`, `replace`, option combinations, edge cases)
+- Test "kitchen sink" combinations of multiple new features together
 - Stress: high dimensions, large n, correlated features, near-singular data, boundary conditions
 
 ### Debugging Test Failures
@@ -196,24 +202,26 @@ Be honest about what works, what has limitations, and how it was built. Don't cl
 ## Translation-Specific Pitfalls
 
 1. **Don't translate the interface literally.** Python OOP maps poorly to Stata. Use Stata idioms.
-2. **Silently ignored options erode trust.** Either implement or reject with an error.
-3. **Pin your reference package version.** Use `requirements.txt`.
-4. **Get correctness right first, optimize second.**
-5. **Stata's `.` differs from Python's NaN.** `.` sorts to the top and compares as larger than all numbers.
-6. **Be transparent about AI-assisted development.**
+2. **Silently ignored options erode trust.** Either implement or reject with an error. Never accept an option and silently do nothing.
+3. **Don't defer features by default.** Plan to implement everything. Flag genuine impossibilities in the plan, but "this is complex" is not a reason to skip.
+4. **Pin your reference package version.** Use `requirements.txt`.
+5. **Get correctness right first, optimize second.**
+6. **Stata's `.` differs from Python's NaN.** `.` sorts to the top and compares as larger than all numbers.
+7. **Be transparent about AI-assisted development.**
 
 ## Workflow Summary
 
 ```
-1. Read and understand source package
+1. Read and understand source package — catalog ALL features, options, and modes
 2. Check for C/C++ backend (R: check src/, Python: check for Cython/C extensions)
 3. Check license compatibility
-4. Map functions → Stata commands, identify compute-heavy algorithms
+4. Map ALL functions/options → Stata commands, identify compute-heavy algorithms
 5. Decide: wrap C++ backend, write C/C++ from scratch, or pure Stata for each algorithm
-6. Scaffold: .ado dispatcher, method wrappers, .sthlp, .pkg, .toc
-7. Implement plugins — wrap existing C++ (see references/cpp_plugins.md) or write C/C++ (see main SKILL.md and references/cpp_plugins.md)
-8. Write reference data generator in source language with pinned dependencies
-9. Write Stata test suite comparing outputs to source implementation
-10. Debug until outputs agree (identical, nearly identical, or substantively identical depending on algorithm)
-11. Write honest README, package, distribute via net install
+6. Plan ALL features upfront — flag difficulties but do not defer by default
+7. Scaffold: .ado dispatcher, method wrappers, .sthlp, .pkg, .toc
+8. Implement plugins with ALL features — wrap existing C++ or write C/C++
+9. Write reference data generator in source language covering ALL features with pinned dependencies
+10. Write Stata test suite: every feature tested for both functionality AND fidelity to source
+11. Debug until outputs agree (identical, nearly identical, or substantively identical depending on algorithm)
+12. Write honest README, package, distribute via net install
 ```

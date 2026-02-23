@@ -12,6 +12,26 @@ The `estout` package is the most widely used tool for creating publication-quali
 
 ---
 
+## Contents
+
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [eststo: Storing Estimation Results](#eststo-storing-estimation-results)
+- [esttab: Creating Tables](#esttab-creating-tables)
+- [estadd: Adding Custom Statistics](#estadd-adding-custom-statistics)
+- [estout: Low-Level Flexible Tables](#estout-low-level-flexible-tables)
+- [Output Formats](#output-formats)
+- [Multi-Column Model Comparisons](#multi-column-model-comparisons)
+- [Summary Statistics Tables](#summary-statistics-tables)
+- [Advanced Features](#advanced-features)
+- [Publication Template: AER Style](#publication-template-aer-style)
+- [Publication Template: Multi-Panel](#publication-template-multi-panel)
+- [Tips and Best Practices](#tips-and-best-practices)
+- [Common Issues](#common-issues)
+- [Quick Reference](#quick-reference)
+
+---
+
 ## Installation
 
 ```stata

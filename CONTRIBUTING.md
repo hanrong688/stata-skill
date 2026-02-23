@@ -72,6 +72,7 @@ Thanks for considering a contribution! The easiest way to help is by adding docu
 - **Include gotchas.** Non-obvious behavior is the most valuable thing you can document.
 - **One file per package.** Don't merge multiple packages into one file.
 - **Test your examples.** Make sure code blocks actually run in Stata.
+- **Add a table of contents** to any file over 100 lines. Place a `## Contents` section after the H1 heading with markdown links to each H2 section.
 - **No personal info.** Don't include machine-specific paths, names, or credentials in examples. Use generic paths like `"$data/myfile.dta"`.
 
 ## Improving Existing Docs

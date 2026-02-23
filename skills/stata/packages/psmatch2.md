@@ -11,6 +11,26 @@
 - Detailed matching diagnostics (individual match info via created variables)
 - Flexible common support control
 
+## Contents
+
+- [Overview](#overview)
+- [Installation](#installation)
+- [Syntax](#syntax)
+- [Variables Created by psmatch2](#variables-created-by-psmatch2)
+- [Returned Results](#returned-results)
+- [Basic Workflow](#basic-workflow)
+- [Matching Algorithms](#matching-algorithms)
+- [Common Support](#common-support)
+- [ATT, ATE, ATU](#att-ate-atu)
+- [Balance Assessment (pstest)](#balance-assessment-pstest)
+- [Comparison: psmatch2 vs teffects psmatch](#comparison-psmatch2-vs-teffects-psmatch)
+- [Saving Matched Samples](#saving-matched-samples)
+- [Bootstrap Standard Errors](#bootstrap-standard-errors)
+- [Complete Analysis Template](#complete-analysis-template)
+- [DiD-PSM Example](#did-psm-example)
+- [Common Pitfalls](#common-pitfalls)
+- [Key References](#key-references)
+
 ## Installation
 
 ```stata

@@ -1,15 +1,19 @@
 # Stata Tables and Reporting: Publication-Ready Output
 
 ## Table of Contents
-1. [The table Command](#the-table-command)
-2. [Summary Statistics Tables](#summary-statistics-tables)
-3. [Regression Tables](#regression-tables)
-4. [Excel Output with putexcel](#excel-output-with-putexcel)
-5. [Word Documents with putdocx](#word-documents-with-putdocx)
-6. [PDF Reports with putpdf](#pdf-reports-with-putpdf)
-7. [LaTeX Export](#latex-export)
-8. [User-Written Packages](#user-written-packages)
-9. [Automated Report Generation](#automated-report-generation)
+
+- [Main Commands Overview](#main-commands-overview)
+- [The table Command](#the-table-command)
+- [Summary Statistics Tables](#summary-statistics-tables)
+- [Regression Tables](#regression-tables)
+- [Excel Output with putexcel](#excel-output-with-putexcel)
+- [Word Documents with putdocx](#word-documents-with-putdocx)
+- [PDF Reports with putpdf](#pdf-reports-with-putpdf)
+- [LaTeX Export](#latex-export)
+- [User-Written Packages](#user-written-packages)
+- [Automated Report Generation](#automated-report-generation)
+- [Best Practices](#best-practices)
+- [Quick Reference](#quick-reference)
 
 ---
 

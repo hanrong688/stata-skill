@@ -1,20 +1,21 @@
 # Synthetic Control Methods with synth
 
-## Table of Contents
-1. [Installation](#installation)
-2. [The synth Command Syntax](#the-synth-command-syntax)
-3. [Specifying Treated Unit and Predictors](#specifying-treated-unit-and-predictors)
-4. [Training and Treatment Periods](#training-and-treatment-periods)
-5. [Optimization Options](#optimization-options)
-6. [Obtaining Synthetic Weights](#obtaining-synthetic-weights)
-7. [Post-Estimation and Gaps](#post-estimation-and-gaps)
-8. [synth_runner for Multiple Treated Units](#synth_runner-for-multiple-treated-units)
-9. [In-Space Placebos](#in-space-placebos)
-10. [In-Time Placebos](#in-time-placebos)
-11. [Inference using RMSPE Ratios](#inference-using-rmspe-ratios)
-12. [Visualization of Results](#visualization-of-results)
-13. [Augmented Synthetic Control](#augmented-synthetic-control)
-14. [Complete Workflow Examples](#complete-workflow-examples)
+## Contents
+
+- [Installation](#installation)
+- [The synth Command Syntax](#the-synth-command-syntax)
+- [Specifying Treated Unit and Predictors](#specifying-treated-unit-and-predictors)
+- [Training and Treatment Periods](#training-and-treatment-periods)
+- [Optimization Options](#optimization-options)
+- [Obtaining Synthetic Weights](#obtaining-synthetic-weights)
+- [Post-Estimation and Gaps](#post-estimation-and-gaps)
+- [synth_runner for Multiple Treated Units](#synth_runner-for-multiple-treated-units)
+- [In-Space Placebos](#in-space-placebos)
+- [In-Time Placebos](#in-time-placebos)
+- [Inference using RMSPE Ratios](#inference-using-rmspe-ratios)
+- [Visualization of Results](#visualization-of-results)
+- [Augmented Synthetic Control](#augmented-synthetic-control)
+- [Complete Workflow Examples](#complete-workflow-examples)
 
 ---
 

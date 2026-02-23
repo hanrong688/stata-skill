@@ -1,5 +1,19 @@
 # External Tools Integration
 
+## Contents
+
+- [Python Integration](#python-integration)
+- [R Integration](#r-integration)
+- [LaTeX and Stata Workflows](#latex-and-stata-workflows)
+- [Excel Automation](#excel-automation)
+- [Database Connections](#database-connections)
+- [Web Scraping and APIs](#web-scraping-and-apis)
+- [Shell Commands and System Integration](#shell-commands-and-system-integration)
+- [Markdown and Dynamic Documents](#markdown-and-dynamic-documents)
+- [Git Version Control](#git-version-control)
+- [Package Management](#package-management)
+- [Best Practices](#best-practices)
+
 ## Python Integration
 
 ### The python Command (Stata 16+)

@@ -1,5 +1,19 @@
 # Stata Workflow Best Practices
 
+## Contents
+
+- [Project Organization and Folder Structure](#project-organization-and-folder-structure)
+- [Master Do-Files and Modular Code](#master-do-files-and-modular-code)
+- [Version Control with Git](#version-control-with-git)
+- [Reproducible Research Practices](#reproducible-research-practices)
+- [Code Commenting and Documentation](#code-commenting-and-documentation)
+- [Data Management Best Practices](#data-management-best-practices)
+- [Testing and Validation](#testing-and-validation)
+- [Debugging Strategies](#debugging-strategies)
+- [Performance Optimization](#performance-optimization)
+- [Common Mistakes to Avoid](#common-mistakes-to-avoid)
+- [Collaboration](#collaboration)
+
 ## Project Organization and Folder Structure
 
 ### Recommended Directory Layout
