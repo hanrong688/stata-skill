@@ -19,7 +19,7 @@ Build high-performance C/C++ plugins for Stata. This skill covers the full lifec
 
 ## How to Approach Every Task
 
-**Before writing any code, enter plan mode.** A good plan covers:
+**Before writing any code, you MUST enter Claude Code's built-in plan mode using the EnterPlanMode tool.** Do NOT skip this by writing a PLAN.md file or dispatching a planning subagent — use the actual plan mode feature so the user can review and approve the plan before any implementation begins. The plan must cover:
 
 1. **Complete inventory** — every feature, option, and component to build (for translation: exhaustive catalog of the source package's API)
 2. **Architecture decisions** — wrap C++ backend vs. write C from scratch vs. pure Stata
@@ -32,6 +32,14 @@ Build high-performance C/C++ plugins for Stata. This skill covers the full lifec
 4. **Phase-by-phase steps** with dependencies between them
 5. **For each step:** what gets built, what tests get written, and that the review loop runs before proceeding
 6. **For translation projects:** a final fidelity audit as the last step (see `translation_workflow.md`)
+
+**After the plan is approved, create a task list (using TaskCreate) that tracks every implementation step.** Each task should correspond to a phase or sub-phase from the plan. Explicitly include:
+- Every implementation step as its own task
+- A review loop task after each implementation step (e.g., "Phase B review loop: dispatch 3 agents, fix issues until LGTM")
+- The final fidelity audit as the last task
+- Use TaskUpdate to mark tasks `in_progress` when starting and `completed` when done
+
+This task list is your persistent checklist — consult it after every step to know what comes next. Do not proceed from memory alone.
 
 **Implement sequentially across components, in parallel within each component.** Once an interface is defined, dispatch independent sub-tasks as parallel subagents (e.g., C plugin implementation, .ado wrapper, and test suite can run simultaneously). Merge their work, run the full test suite, then proceed to the review loop before moving to the next component.
 

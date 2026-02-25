@@ -4,7 +4,7 @@ A complete workflow for porting a Python or R statistical package into a native 
 
 ## Mandatory: Start in Plan Mode
 
-**Every translation project MUST begin in plan mode.** Before writing any implementation code, produce a complete plan document covering:
+**Every translation project MUST begin in plan mode.** Enter plan mode using the EnterPlanMode tool. Do NOT substitute writing a PLAN.md file or dispatching a planning subagent — use the actual built-in plan mode feature so the user can review and approve the plan interactively. Present a complete plan covering:
 
 1. All features/options of the source package (exhaustive inventory)
 2. Architecture decisions (wrap C++ backend vs. reimplement)
@@ -13,7 +13,15 @@ A complete workflow for porting a Python or R statistical package into a native 
 5. The multi-agent review loop baked into every implementation step (see "Multi-Agent Review Loop" below)
 6. A final fidelity audit as the last step (see "Final Fidelity Audit" below)
 
-Use the Plan agent (`subagent_type=Plan`) or enter plan mode to produce this document. The plan must be approved before implementation begins. Every step in the plan should specify what gets built, what gets tested, and that the review loop runs before proceeding.
+The plan must be approved by the user before implementation begins. Every step in the plan should specify what gets built, what gets tested, and that the review loop runs before proceeding.
+
+**After plan approval, create a task list (using TaskCreate).** Each task should correspond to a phase or sub-phase from the plan. Explicitly include:
+- Every implementation step as its own task
+- A review loop task after each implementation step (e.g., "Phase B review loop")
+- The final fidelity audit as the last task
+- Mark tasks `in_progress` when starting, `completed` when done (using TaskUpdate)
+
+This task list is your persistent checklist. Consult it after every step to determine what comes next. Do not proceed from memory alone.
 
 ## Phase 1: Scope and Understand the Source
 
@@ -322,7 +330,7 @@ Be honest about what works, what has limitations, and how it was built. Don't cl
 ## Workflow Summary
 
 ```
- 1. START IN PLAN MODE — produce a complete plan document before writing any code
+ 1. ENTER PLAN MODE (EnterPlanMode tool) — present plan to user for approval
  2. Read and understand source package — catalog ALL features, options, and modes
  3. Repurpose original test suite — extract test data, cases, and expected outputs
  4. Check for C/C++ backend (R: check src/, Python: check for Cython/C extensions)
@@ -331,20 +339,24 @@ Be honest about what works, what has limitations, and how it was built. Don't cl
  7. Decide: wrap C++ backend, write C/C++ from scratch, or pure Stata
  8. Plan ALL features upfront — flag difficulties but do not defer by default
  9. Bake multi-agent review loop into every plan step
-10. Scaffold: .ado dispatcher, method wrappers, .sthlp, .pkg, .toc
-11. For each implementation step:
-      a. Implement the feature
-      b. Write tests for fidelity and functionality (don't skip this)
-      c. Compile and run full test suite
-      d. Dispatch review agents (default: Claude + Codex + Gemini; fallback: 2-3 Claude agents)
-      e. Fix any issues raised by reviewers (including writing missing tests)
-      f. Re-review until all agents say LGTM
-      g. Proceed to next step
-12. Write reference data generator covering ALL features with pinned dependencies
-13. Write Stata test suite: every feature tested for both functionality AND fidelity
-14. Debug until outputs agree with original package
-15. FINAL FIDELITY AUDIT — dispatch multi-agent team to verify full feature parity
-16. If gaps found: create new plan (with review loop), implement, re-audit
-17. Repeat until audit passes clean
-18. Write honest README, package, distribute via net install
+10. GET USER APPROVAL of the plan — do not proceed until approved
+11. CREATE TASK LIST (TaskCreate) — one task per phase, including review loops and audit
+12. Scaffold: .ado dispatcher, method wrappers, .sthlp, .pkg, .toc
+13. For each implementation step:
+      a. Mark task in_progress (TaskUpdate)
+      b. Implement the feature
+      c. Write tests for fidelity and functionality (don't skip this)
+      d. Compile and run full test suite
+      e. Dispatch review agents (default: Claude + Codex + Gemini; fallback: 2-3 Claude agents)
+      f. Fix any issues raised by reviewers (including writing missing tests)
+      g. Re-review until all agents say LGTM
+      h. Mark task completed (TaskUpdate)
+      i. Check task list to determine next step — do not proceed from memory alone
+14. Write reference data generator covering ALL features with pinned dependencies
+15. Write Stata test suite: every feature tested for both functionality AND fidelity
+16. Debug until outputs agree with original package
+17. FINAL FIDELITY AUDIT — dispatch multi-agent team to verify full feature parity
+18. If gaps found: create new plan (with review loop), implement, re-audit
+19. Repeat until audit passes clean
+20. Write honest README, package, distribute via net install
 ```
