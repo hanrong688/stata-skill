@@ -4,7 +4,7 @@ A complete workflow for porting a Python or R statistical package into a native 
 
 ## Mandatory: Start in Plan Mode
 
-**Every translation project MUST begin in plan mode.** Enter plan mode using the EnterPlanMode tool. Do NOT substitute writing a PLAN.md file or dispatching a planning subagent — use the actual built-in plan mode feature so the user can review and approve the plan interactively. Present a complete plan covering:
+**Every translation project MUST begin in plan mode.** Before writing any implementation code, produce a complete plan document covering:
 
 1. All features/options of the source package (exhaustive inventory)
 2. Architecture decisions (wrap C++ backend vs. reimplement)
@@ -13,15 +13,7 @@ A complete workflow for porting a Python or R statistical package into a native 
 5. The multi-agent review loop baked into every implementation step (see "Multi-Agent Review Loop" below)
 6. A final fidelity audit as the last step (see "Final Fidelity Audit" below)
 
-The plan must be approved by the user before implementation begins. Every step in the plan should specify what gets built, what gets tested, and that the review loop runs before proceeding.
-
-**After plan approval, create a task list (using TaskCreate).** Each task should correspond to a phase or sub-phase from the plan. Explicitly include:
-- Every implementation step as its own task
-- A review loop task after each implementation step (e.g., "Phase B review loop")
-- The final fidelity audit as the last task
-- Mark tasks `in_progress` when starting, `completed` when done (using TaskUpdate)
-
-This task list is your persistent checklist. Consult it after every step to determine what comes next. Do not proceed from memory alone.
+Enter plan mode to produce this document. The plan must be approved before implementation begins. Every step in the plan should specify what gets built, what gets tested, and that the review loop runs before proceeding.
 
 ## Phase 1: Scope and Understand the Source
 
@@ -234,12 +226,12 @@ This means if the original package has 15 options, the test suite should exercis
 
 After completing each step (compile, test, verify no regressions):
 
-1. **Dispatch review agents in parallel.** The default is three agents from different models for maximum diversity:
-   - **Claude agent** (Task tool, `subagent_type=opus-general-agent`): deep code review for correctness, edge cases, architectural issues
-   - **Codex agent** (via `codex-cli-scripting` skill): independent review for gaps, missed requirements, potential bugs
-   - **Gemini agent** (via `gemini-cli-scripting` skill): independent review for completeness, consistency with original package behavior
+1. **Dispatch review agents in parallel.** Aim for 2-3 agents with different focuses. If you have access to multiple AI models (Claude, GPT, Gemini, etc.), use different models for diversity of perspective. If not, dispatch multiple agents from the same model with different review prompts.
 
-   **Fallback (Claude-only):** If Codex CLI or Gemini CLI are not available, dispatch 2-3 Claude subagents with different review focuses instead (correctness focus, completeness focus, architecture focus). This provides diversity through different review prompts rather than different models.
+   Suggested review focuses:
+   - **Correctness agent:** deep code review for bugs, edge cases, memory safety, architectural issues
+   - **Completeness agent:** review for missed requirements, untested paths, gaps vs. original package
+   - **Consistency agent:** verify behavior matches original package, check for API contract violations
 
    Each agent receives:
    - The step's requirements (from the plan)
@@ -253,9 +245,9 @@ After completing each step (compile, test, verify no regressions):
 
 4. **If all agents say LGTM:** The step is complete. Proceed to the next step.
 
-### Why Cross-Model Review
+### Why Multi-Perspective Review
 
-Different models catch different things. Claude excels at deep reasoning about edge cases. Codex is strong on code correctness and API contracts. Gemini catches completeness gaps. Using all three provides genuine diversity of perspective — not three copies of the same reviewer. When falling back to Claude-only, different review prompts approximate this diversity.
+Different reviewers (whether different models or differently-prompted agents) catch different things. One may focus on algorithmic correctness while another catches a missing edge case or a documentation gap. The goal is genuine diversity of perspective, not three copies of the same review.
 
 ### Writing Tests During Implementation
 
@@ -283,7 +275,7 @@ If a reviewer identifies an untested code path, writing the test is part of the 
 
 ### Audit Process
 
-1. **Dispatch a team of 3 subagents** (default: Claude + Codex + Gemini; fallback: 2-3 Claude agents with different audit focuses). Each agent receives:
+1. **Dispatch a team of 3 subagents** (aim for 2-3 agents with different review focuses; use multiple models if available). Each agent receives:
    - The original package's documentation (README, API docs, help pages)
    - The complete list of features/options from Phase 1 scoping
    - The Stata implementation's help file and source code
@@ -325,12 +317,12 @@ Be honest about what works, what has limitations, and how it was built. Don't cl
 4. **Pin your reference package version.** Use `requirements.txt`.
 5. **Get correctness right first, optimize second.**
 6. **Stata's `.` differs from Python's NaN.** `.` sorts to the top and compares as larger than all numbers.
-7. **Be transparent about AI-assisted development.**
+7. **Be transparent about AI-assisted development.** If the package was AI-generated or AI-assisted, note this in the README. Users appreciate honesty about how the code was produced.
 
 ## Workflow Summary
 
 ```
- 1. ENTER PLAN MODE (EnterPlanMode tool) — present plan to user for approval
+ 1. START IN PLAN MODE — produce a complete plan document before writing any code
  2. Read and understand source package — catalog ALL features, options, and modes
  3. Repurpose original test suite — extract test data, cases, and expected outputs
  4. Check for C/C++ backend (R: check src/, Python: check for Cython/C extensions)
@@ -339,24 +331,20 @@ Be honest about what works, what has limitations, and how it was built. Don't cl
  7. Decide: wrap C++ backend, write C/C++ from scratch, or pure Stata
  8. Plan ALL features upfront — flag difficulties but do not defer by default
  9. Bake multi-agent review loop into every plan step
-10. GET USER APPROVAL of the plan — do not proceed until approved
-11. CREATE TASK LIST (TaskCreate) — one task per phase, including review loops and audit
-12. Scaffold: .ado dispatcher, method wrappers, .sthlp, .pkg, .toc
-13. For each implementation step:
-      a. Mark task in_progress (TaskUpdate)
-      b. Implement the feature
-      c. Write tests for fidelity and functionality (don't skip this)
-      d. Compile and run full test suite
-      e. Dispatch review agents (default: Claude + Codex + Gemini; fallback: 2-3 Claude agents)
-      f. Fix any issues raised by reviewers (including writing missing tests)
-      g. Re-review until all agents say LGTM
-      h. Mark task completed (TaskUpdate)
-      i. Check task list to determine next step — do not proceed from memory alone
-14. Write reference data generator covering ALL features with pinned dependencies
-15. Write Stata test suite: every feature tested for both functionality AND fidelity
-16. Debug until outputs agree with original package
-17. FINAL FIDELITY AUDIT — dispatch multi-agent team to verify full feature parity
-18. If gaps found: create new plan (with review loop), implement, re-audit
-19. Repeat until audit passes clean
-20. Write honest README, package, distribute via net install
+10. Scaffold: .ado dispatcher, method wrappers, .sthlp, .pkg, .toc
+11. For each implementation step:
+      a. Implement the feature
+      b. Write tests for fidelity and functionality (don't skip this)
+      c. Compile and run full test suite
+      d. Dispatch review agents (use multiple review agents with different focuses)
+      e. Fix any issues raised by reviewers (including writing missing tests)
+      f. Re-review until all agents say LGTM
+      g. Proceed to next step
+12. Write reference data generator covering ALL features with pinned dependencies
+13. Write Stata test suite: every feature tested for both functionality AND fidelity
+14. Debug until outputs agree with original package
+15. FINAL FIDELITY AUDIT — dispatch multi-agent team to verify full feature parity
+16. If gaps found: create new plan (with review loop), implement, re-audit
+17. Repeat until audit passes clean
+18. Write honest README, package, distribute via net install
 ```

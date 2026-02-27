@@ -4,20 +4,28 @@
 
 ### stata.toc (Table of Contents)
 
+List **all package variants** — one all-platforms package plus one per OS:
+
 ```
 v 3
 d packagename - Short description of the package
 d Author Name, Institution
 d Distribution-Date: YYYYMMDD
-p packagename
+p packagename All platforms (macOS, Linux, Windows)
+p packagename_mac macOS only (ARM64 + Intel)
+p packagename_linux Linux only (x86_64)
+p packagename_win Windows only (x86_64)
 ```
 
 - Line 1: `v 3` (version)
 - `d` lines: description, author, date
-- `p packagename`: references `packagename.pkg`
+- `p packagename` lines: each references a `.pkg` file. Text after the name is a description shown to users.
 
-### packagename.pkg (Package Manifest)
+### Platform-Specific .pkg Files
 
+Create **one .pkg per platform**. All packages install the same `.ado` and `.sthlp` files — only the `.plugin` binary differs. This way users download only the binary for their OS.
+
+**packagename_mac.pkg** (macOS — includes both ARM64 and Intel):
 ```
 v 3
 d packagename: One-line description
@@ -27,9 +35,62 @@ d email@example.com
 d
 d Distribution-Date: YYYYMMDD
 d
-f packagename.ado
-f packagename_method1.ado
-f packagename.sthlp
+f mycommand.ado
+f mycommand.sthlp
+f mycommand_sub.ado
+f mycommand_sub.sthlp
+f myplugin.darwin-arm64.plugin
+f myplugin.darwin-x86_64.plugin
+```
+
+**packagename_linux.pkg** (Linux x86_64):
+```
+v 3
+d packagename: One-line description
+d
+d Author Name, Institution
+d email@example.com
+d
+d Distribution-Date: YYYYMMDD
+d
+f mycommand.ado
+f mycommand.sthlp
+f mycommand_sub.ado
+f mycommand_sub.sthlp
+f myplugin.linux-x86_64.plugin
+```
+
+**packagename_win.pkg** (Windows x86_64):
+```
+v 3
+d packagename: One-line description
+d
+d Author Name, Institution
+d email@example.com
+d
+d Distribution-Date: YYYYMMDD
+d
+f mycommand.ado
+f mycommand.sthlp
+f mycommand_sub.ado
+f mycommand_sub.sthlp
+f myplugin.windows-x86_64.plugin
+```
+
+**packagename.pkg** (all platforms — for users who don't care about download size):
+```
+v 3
+d packagename: One-line description
+d
+d Author Name, Institution
+d email@example.com
+d
+d Distribution-Date: YYYYMMDD
+d
+f mycommand.ado
+f mycommand.sthlp
+f mycommand_sub.ado
+f mycommand_sub.sthlp
 f myplugin.darwin-arm64.plugin
 f myplugin.darwin-x86_64.plugin
 f myplugin.linux-x86_64.plugin
@@ -37,39 +98,79 @@ f myplugin.windows-x86_64.plugin
 ```
 
 - `f` lines list every file to install
-- Files install to the user's PLUS ado directory
-- Plugin files must be listed explicitly (all platforms)
-- Users get all platform binaries; Stata loads the right one at runtime
+- Files install to the user's PLUS ado directory in a letter-subdirectory (e.g., `plus/g/`)
+- Only list `.plugin` files that actually exist — listing a nonexistent file fails the install
 
-### Installation Command
+### Installation Commands
 
 ```stata
+* macOS
+net install packagename_mac, from("https://raw.githubusercontent.com/user/repo/main") replace
+* Linux
+net install packagename_linux, from("https://raw.githubusercontent.com/user/repo/main") replace
+* Windows
+net install packagename_win, from("https://raw.githubusercontent.com/user/repo/main") replace
+* All platforms (larger download)
 net install packagename, from("https://raw.githubusercontent.com/user/repo/main") replace
 ```
 
-The `from()` URL must point to a directory containing `stata.toc`.
+The `from()` URL must point to a directory containing `stata.toc`. The repo must be **public** — private repos return 404 from `raw.githubusercontent.com`.
+
+### Plugin Loading (findfile)
+
+**Always use `findfile` to locate plugin binaries.** After `net install`, plugins live in adopath letter-subdirectories (e.g., `plus/g/`). Bare filenames in `using()` don't search these paths. Use `findfile` to get the absolute path:
+
+```stata
+local plugin_loaded 0
+foreach plat in darwin-arm64 darwin-x86_64 linux-x86_64 windows-x86_64 {
+    if !`plugin_loaded' {
+        capture findfile myplugin.`plat'.plugin
+        if _rc == 0 {
+            capture program myplugin, plugin using("`r(fn)'")
+            if _rc == 0 | _rc == 110 {
+                local plugin_loaded 1
+            }
+        }
+    }
+}
+if !`plugin_loaded' {
+    display as error "could not load myplugin"
+    display as error "make sure the .plugin file is installed"
+    exit 601
+}
+```
+
+`_rc == 110` means "already loaded" — that's fine.
+
+## Help File Naming
+
+**Help files use the short command name, not the package/repo name.** The repo might be called `mypackage_stata` for GitHub discoverability, but the help file should be `mypackage.sthlp` so that `help mypackage` works. Package name and help file name are independent: `mypackage_stata_mac.pkg` installs `mypackage.sthlp`.
+
+For multi-command packages, create:
+- **One overview help file** with the short package name (e.g., `mypackage.sthlp`) listing all subcommands
+- **One help file per subcommand** (e.g., `mypackage_subcommand1.sthlp`, `mypackage_subcommand2.sthlp`)
 
 ## Help File (.sthlp) Template
 
 ```smcl
 {smcl}
 {* *! version 1.0.0  DDmonYYYY}{...}
-{viewerjumpto "Syntax" "packagename##syntax"}{...}
-{viewerjumpto "Description" "packagename##description"}{...}
-{viewerjumpto "Options" "packagename##options"}{...}
-{viewerjumpto "Examples" "packagename##examples"}{...}
-{viewerjumpto "Stored results" "packagename##results"}{...}
+{viewerjumpto "Syntax" "commandname##syntax"}{...}
+{viewerjumpto "Description" "commandname##description"}{...}
+{viewerjumpto "Options" "commandname##options"}{...}
+{viewerjumpto "Examples" "commandname##examples"}{...}
+{viewerjumpto "Stored results" "commandname##results"}{...}
 
 {title:Title}
 
 {phang}
-{bf:packagename} {hline 2} Short description of what the command does
+{bf:commandname} {hline 2} Short description of what the command does
 
 {marker syntax}{...}
 {title:Syntax}
 
 {p 8 17 2}
-{cmdab:packagename}
+{cmdab:commandname}
 {depvar} {indepvars}
 {ifin}
 {cmd:,} {opt gen:erate(newvar)} [{it:options}]
@@ -93,7 +194,7 @@ The `from()` URL must point to a directory containing `stata.toc`.
 {title:Description}
 
 {pstd}
-{cmd:packagename} does X based on Y.
+{cmd:commandname} does X based on Y.
 
 {marker options}{...}
 {title:Options}
@@ -110,7 +211,7 @@ The `from()` URL must point to a directory containing `stata.toc`.
 {phang2}{cmd:. sysuse auto, clear}{p_end}
 
 {pstd}Basic usage{p_end}
-{phang2}{cmd:. packagename price mpg weight, gen(price_imputed)}{p_end}
+{phang2}{cmd:. commandname price mpg weight, gen(price_imputed)}{p_end}
 
 {marker results}{...}
 {title:Stored results}
@@ -267,6 +368,8 @@ clean:
 - .ado files: lowercase, underscores for multi-word commands
 - Stata convention: options use lowercase, abbreviations capitalized (`GENerate`, `MAXDepth`)
 - Target Stata 14.0+ for plugin support (`version 14.0`)
+- **Help files use the short command name, not the repo name.** Repo `mypackage_stata` → help file `mypackage.sthlp` → user types `help mypackage`. Don't add "stata" to names the user types — they're already in Stata.
+- **Commands also use the short name.** `mypackage_subcommand`, not `mypackage_stata_subcommand`. The package name (used for `net install`) can include "stata" for GitHub discoverability, but commands and help files should not.
 
 ## Useful Stata Idioms
 

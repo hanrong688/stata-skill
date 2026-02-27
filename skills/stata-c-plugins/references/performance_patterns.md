@@ -1,5 +1,19 @@
 # C Plugin Performance Patterns
 
+Each pattern below addresses a specific performance bottleneck. Use the one that matches your algorithm's hot path:
+
+| Pattern | Use When | Speedup Source |
+|---------|----------|---------------|
+| Pre-sorted indices | Tree-based split search | O(n) scan instead of O(n log n) sort per split |
+| Precomputed distance norms | KNN or distance-based methods | Avoids redundant norm computation |
+| Quickselect | Finding k-th element (KNN neighbors, quantiles) | O(n) expected vs. O(n log n) full sort |
+| Parallel training (pthreads) | Ensemble methods (random forests, bagging) | Trains multiple models simultaneously |
+| XorShift RNG | Any stochastic algorithm | Fast, thread-safe RNG since Stata's RNG is inaccessible |
+| Dense tree arrays | Tree-based methods | Cache locality from contiguous memory |
+| Missing data handling | Any plugin that receives Stata data | Correctly interprets Stata's missing value representation |
+
+You don't need all of these. Pick the ones relevant to your algorithm.
+
 ## 1. Pre-sorted Feature Indices (Tree Algorithms)
 
 Sort feature values once, then scan linearly at each node:

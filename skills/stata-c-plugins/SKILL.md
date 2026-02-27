@@ -15,11 +15,13 @@ description: >-
 
 # Stata C/C++ Plugin Development
 
-Build high-performance C/C++ plugins for Stata. This skill covers the full lifecycle from SDK setup through cross-platform distribution, based on real experience building production plugins (QRF, KNN, Neural Network) for the microimpute_stata project.
+Build high-performance C/C++ plugins for Stata. This skill covers the full lifecycle from SDK setup through cross-platform distribution, based on real experience building production Stata plugins for statistical imputation, random forests, string matching, and causal inference.
+
+**This skill assumes macOS (Apple Silicon or Intel) as the development platform.** Build commands, cross-compilation workflows, and Docker instructions are all Mac-oriented. The plugins themselves target all four platforms (macOS ARM64, macOS x86_64, Linux x86_64, Windows x86_64), but the *development environment* is macOS. If you need to develop on Linux or Windows natively, adapt the compilation and Docker sections accordingly.
 
 ## How to Approach Every Task
 
-**Before writing any code, you MUST enter Claude Code's built-in plan mode using the EnterPlanMode tool.** Do NOT skip this by writing a PLAN.md file or dispatching a planning subagent — use the actual plan mode feature so the user can review and approve the plan before any implementation begins. The plan must cover:
+**Before writing any code, enter plan mode.** A good plan covers:
 
 1. **Complete inventory** — every feature, option, and component to build (for translation: exhaustive catalog of the source package's API)
 2. **Architecture decisions** — wrap C++ backend vs. write C from scratch vs. pure Stata
@@ -33,19 +35,11 @@ Build high-performance C/C++ plugins for Stata. This skill covers the full lifec
 5. **For each step:** what gets built, what tests get written, and that the review loop runs before proceeding
 6. **For translation projects:** a final fidelity audit as the last step (see `translation_workflow.md`)
 
-**After the plan is approved, create a task list (using TaskCreate) that tracks every implementation step.** Each task should correspond to a phase or sub-phase from the plan. Explicitly include:
-- Every implementation step as its own task
-- A review loop task after each implementation step (e.g., "Phase B review loop: dispatch 3 agents, fix issues until LGTM")
-- The final fidelity audit as the last task
-- Use TaskUpdate to mark tasks `in_progress` when starting and `completed` when done
-
-This task list is your persistent checklist — consult it after every step to know what comes next. Do not proceed from memory alone.
-
 **Implement sequentially across components, in parallel within each component.** Once an interface is defined, dispatch independent sub-tasks as parallel subagents (e.g., C plugin implementation, .ado wrapper, and test suite can run simultaneously). Merge their work, run the full test suite, then proceed to the review loop before moving to the next component.
 
 **Run the review loop after every component:**
-- Default: dispatch Claude (`subagent_type=opus-general-agent`) + Codex (`codex-cli-scripting` skill) + Gemini (`gemini-cli-scripting` skill) agents in parallel
-- Fallback (if Codex/Gemini CLI unavailable): dispatch 2-3 Claude subagents with different focuses (correctness, completeness, architecture)
+- Default: dispatch 2-3 review agents in parallel, ideally from different models (e.g., Claude + GPT + Gemini) for diversity of perspective. Use whatever multi-model tools are available in your environment.
+- If only one model is available: dispatch 2-3 agents with different review focuses (correctness, completeness, architecture). Different prompts approximate the diversity of different models.
 - Each agent reviews the diff, test results, and requirements — instruction: "List any gaps, bugs, or issues. Say LGTM if everything looks correct."
 - Fix all issues raised, re-dispatch, loop until all agents say LGTM. Then proceed.
 
@@ -55,7 +49,7 @@ This task list is your persistent checklist — consult it after every step to k
 
 **If a C++ implementation exists, wrap it.** Do not reimplement the algorithm in C. Wrapping gives you identical output (same code path), production-grade performance, and a fraction of the code. The plugin is just a thin `extern "C"` glue layer between Stata's SDK and the library's API. Binary size is irrelevant — statically link everything (`-static-libstdc++ -static-libgcc`) and ship whatever size the binary turns out to be, even 10-15 MB on Windows. Users don't care about plugin file size; they care about correct results.
 
-See `references/cpp_plugins.md` for the full pattern and `references/translation_workflow.md` for the workflow. Working examples: [stata-rapidfuzz](https://github.com/dylantmoore/stata-rapidfuzz) (C++ wrapping), [drf_stata](https://github.com/dylantmoore/drf_stata) (C++ wrapping, R translation), [microimpute_stata](https://github.com/dylantmoore/microimpute_stata) (multi-plugin package), [ranger_stata](https://github.com/dylantmoore/ranger_stata) (C++ wrapping, 4 forest types, save/load).
+See `references/cpp_plugins.md` for the full pattern and `references/translation_workflow.md` for the workflow. Working examples of this approach (wrapping C++ backends, multi-plugin dispatching, save/load for scoring on new data) can be found in the repos listed in the project CLAUDE.md under "Example Applications."
 
 For translation projects, also: repurpose the original package's test suite and data (see `references/testing_strategy.md` Layer 0), write additional Stata-specific tests, and end the plan with a multi-agent fidelity audit. See `references/translation_workflow.md` for the complete workflow.
 
@@ -70,7 +64,7 @@ These two files define the interface between your C code and Stata:
 | `SF_vdata(var, obs, &val)` | Read variable value (1-indexed!) |
 | `SF_vstore(var, obs, val)` | Write variable value (1-indexed!) |
 | `SF_nobs()` | Number of observations in current dataset |
-| `SF_nvar()` | Number of variables passed to plugin |
+| `SF_nvar()` | Number of variables in the **entire dataset** (not just plugin call) |
 | `SF_is_missing(val)` | Check for Stata missing value (`.`) |
 | `SV_missval` | The missing value constant |
 | `SF_display(msg)` | Print informational text in Stata |
@@ -114,8 +108,11 @@ STDLL stata_call(int argc, char *argv[]) {
 
     // 2. Get dimensions
     ST_int nobs  = SF_nobs();
-    ST_int nvars = SF_nvar();  // includes output variable
-    int p = nvars - 2;         // subtract depvar + output var
+    // CAUTION: SF_nvar() returns ALL variables in the dataset, not just
+    // the ones passed to `plugin call`. If the .ado creates tempvars
+    // (touse, merge_id, etc.) the count will be higher than expected.
+    // Pass the variable count via argv instead of relying on SF_nvar().
+    int p = atoi(argv[3]);  // safer: pass feature count explicitly
 
     // 3. Allocate memory
     double *X    = calloc(nobs * p, sizeof(double));
@@ -228,7 +225,7 @@ end
 
 ### Plugin Sorting Contract
 
-**CRITICAL:** Some plugins expect data sorted a specific way (training rows first, test rows second). Others handle missing data internally. A sorting mismatch was the most destructive bug in the microimpute project — QRF correlation dropped from 0.99 to 0.38.
+**CRITICAL:** Some plugins expect data sorted a specific way (training rows first, test rows second). Others handle missing data internally. Sorting mismatches are among the most dangerous bugs — the plugin silently reads the wrong data, producing garbage output with no error message. A mismatched sort order can drop prediction quality dramatically (e.g., correlation going from 0.99 to 0.38) because the plugin treats test observations as training data and vice versa.
 
 - If the plugin checks `SF_is_missing()` internally: do NOT sort in the .ado wrapper
 - If the plugin expects `n_train` contiguous rows then `n_test` rows: sort by `missing(depvar)` before calling
@@ -237,21 +234,29 @@ Document which pattern your plugin uses.
 
 ### Plugin Loading (Cross-Platform)
 
-The cascade pattern (used by gtools and other major packages):
+**Use `findfile` to locate the plugin binary.** Bare filenames in `using()` do not search Stata's adopath subdirectories (e.g., `plus/g/` where `net install` places files). This causes "plugin not found" errors even when the file is correctly installed. The `findfile` command searches the full adopath and returns the absolute path.
+
 ```stata
-capture program myplugin, plugin using("myplugin.darwin-arm64.plugin")
-if _rc {
-    capture program myplugin, plugin using("myplugin.darwin-x86_64.plugin")
-    if _rc {
-        capture program myplugin, plugin using("myplugin.linux-x86_64.plugin")
-        if _rc {
-            capture program myplugin, plugin using("myplugin.windows-x86_64.plugin")
+local plugin_loaded 0
+foreach plat in darwin-arm64 darwin-x86_64 linux-x86_64 windows-x86_64 {
+    if !`plugin_loaded' {
+        capture findfile myplugin.`plat'.plugin
+        if _rc == 0 {
+            capture program myplugin, plugin using("`r(fn)'")
+            if _rc == 0 | _rc == 110 {
+                local plugin_loaded 1
+            }
         }
     }
 }
+if !`plugin_loaded' {
+    display as error "could not load myplugin"
+    display as error "make sure the .plugin file is installed"
+    exit 601
+}
 ```
 
-For slightly faster loading, check `c(os)` first to try the most likely platform. But the cascade is simpler and proven.
+`_rc == 110` means "already loaded" — that's fine, the plugin is ready to use.
 
 **Note:** `clear all` wipes loaded plugin definitions. If a test script starts with `clear all`, all `program ... plugin` definitions are gone. Reload them.
 
@@ -334,31 +339,33 @@ Debugging is hard because you can't attach a debugger to Stata's plugin host.
 
 ## Packaging and Distribution
 
-A distributable Stata package with plugins needs:
+**Use platform-specific `.pkg` files** so users only download the binary for their OS. Stata's `net install` has no conditional logic, so the way to avoid shipping all 4 binaries to every user is to offer separate packages per platform. All packages install the same `.ado` and `.sthlp` files — only the `.plugin` binary differs.
 
 ```
 mypackage/
-├── stata.toc              # net install table of contents
-├── mypackage.pkg          # lists all files to install
-├── mypackage.ado          # user-facing command (.ado wrapper)
-├── mypackage.sthlp        # help file (SMCL format)
+├── stata.toc                          # lists all package variants
+├── mypackage.pkg                      # all platforms (for users who don't care)
+├── mypackage_mac.pkg                  # macOS only (ARM64 + Intel)
+├── mypackage_linux.pkg                # Linux only (x86_64)
+├── mypackage_win.pkg                  # Windows only (x86_64)
+├── mycommand.sthlp                    # overview help file (short name!)
+├── mycommand.ado                      # user-facing command
 ├── myplugin.darwin-arm64.plugin
 ├── myplugin.darwin-x86_64.plugin
 ├── myplugin.linux-x86_64.plugin
 ├── myplugin.windows-x86_64.plugin
-└── c_source/              # NOT distributed, for building
-    ├── build.py
-    ├── stplugin.c
-    ├── stplugin.h
-    └── algorithm.c
+└── c_source/                          # NOT distributed, for building
 ```
 
-Users install with:
+Users install their platform's package:
 ```stata
-net install mypackage, from("https://raw.githubusercontent.com/user/repo/main") replace
+* macOS
+net install mypackage_mac, from("https://raw.githubusercontent.com/user/repo/main") replace
+* Linux
+net install mypackage_linux, from("https://raw.githubusercontent.com/user/repo/main") replace
+* Windows
+net install mypackage_win, from("https://raw.githubusercontent.com/user/repo/main") replace
 ```
-
-All platform binaries ship to all users via `net install` -- Stata loads only the matching one at runtime. Windows C++ binaries can be 10-15MB due to static linking, which is normal.
 
 See `references/packaging_and_help.md` for `.toc`, `.pkg`, `.sthlp` templates and SMCL formatting.
 
@@ -378,13 +385,17 @@ See `references/packaging_and_help.md` for `.toc`, `.pkg`, `.sthlp` templates an
 
 7. **Only the first `program define` in a .ado file is auto-discovered.** Subprograms need their own .ado files or explicit `run` to load.
 
-8. **Normalize inputs for neural net plugins.** Scale to mean=0, sd=1 in the .ado wrapper, denormalize predictions after. The plugin shouldn't handle this.
+8. **Normalize inputs when the algorithm requires it** (neural networks, gradient-based methods, distance-based methods like KNN). Scale to mean=0, sd=1 in the .ado wrapper, denormalize predictions after. The plugin should receive clean, normalized data — let the .ado handle the scaling.
 
 9. **pthreads on Windows needs `-lwinpthread`.** Use conditional linker flags.
 
 10. **Memory errors crash Stata with no recovery.** Pre-allocate everything, check every allocation, build with sanitizers during development.
 
 11. **glibc version mismatch.** Building Linux plugins on a modern distro produces binaries that won't load on older systems. Use Ubuntu 18.04 in Docker for maximum compatibility.
+
+12. **`SF_nvar()` returns total dataset variables.** It counts ALL variables in the dataset, not just the ones in the `plugin call` varlist. If the .ado creates tempvars (`touse`, `merge_id`, sort keys), the count will be higher than expected. Never use `SF_nvar()` to validate argument counts — pass the expected count via `argv` instead.
+
+13. **Plugin loading with bare `using()` fails after `net install`.** `net install` places files in adopath letter-subdirectories (e.g., `plus/g/`). Bare filenames in `program ... plugin using("file.plugin")` don't search these subdirectories. Always use `findfile` to get the absolute path first (see Plugin Loading section above).
 
 ## Naming Conventions
 
@@ -395,3 +406,4 @@ See `references/packaging_and_help.md` for `.toc`, `.pkg`, `.sthlp` templates an
 - .ado files: lowercase, underscores for multi-word
 - Stata option convention: options lowercase, abbreviations capitalized (`GENerate`, `MAXDepth`)
 - Target Stata 14.0+ (`version 14.0`) for plugin support
+- **Help files use the short command name, not the repo name.** If the repo is called `mypackage_stata`, the overview help file should still be `mypackage.sthlp` (so `help mypackage` works). Don't append "stata" to help file or command names — the user is already in Stata.

@@ -1,10 +1,10 @@
 # C++ Plugins for Stata
 
-Practical guidance for building Stata plugins in C++. **Wrapping an existing C++ library is the primary use case** — if a C++ implementation of your algorithm exists, always wrap it rather than reimplementing from scratch. This file covers the patterns you need.
+Practical guidance for building Stata plugins in C++. **Wrapping an existing C++ library is the most common use case.** If a C++ implementation of your algorithm exists, prefer wrapping it — you get identical output, the same performance, and far less code to write and maintain. This file covers the patterns you need.
 
 ## When to Use C++
 
-- **An existing C++ implementation exists.** This is the most common case and should always be your first check. If you're translating an R package that has a C++ backend in `src/`, or a standalone C++ library exists for the algorithm, wrap it. You get identical output (same code path), same performance, and a fraction of the code. **Do not reimplement in C when a C++ backend is available.**
+- **An existing C++ implementation exists.** This is the most common case and should always be your first check. If you're translating an R package that has a C++ backend in `src/`, or a standalone C++ library exists for the algorithm, wrap it. You get identical output (same code path), same performance, and a fraction of the code. **Prefer wrapping over reimplementing.** Only reimplement from scratch if no C++ backend exists, the backend has unmanageable dependencies, or its API is too poorly documented to wrap efficiently.
 - **A standalone C++ library does what you need.** RapidFuzz for string matching, Eigen for linear algebra, nlohmann/json for config parsing, etc. Header-only libraries are especially easy — vendor the headers and add `-I`.
 - **Complex data structures.** Trees, graphs, hash maps, priority queues — `std::map`, `std::unordered_map`, `std::priority_queue` are battle-tested.
 - **Threading with `std::thread`/`std::async`.** Simpler than raw pthreads for many use cases.
@@ -205,9 +205,9 @@ No difference from C plugins. The output is a single `.plugin` binary per platfo
 
 ### Finding C++ Backends
 
-- **R packages:** Check `src/` on GitHub or in the CRAN source tarball. Many R packages use Rcpp and have their algorithms in `.cpp` files. Examples: `grf`, `ranger`, `xgboost`.
+- **R packages:** Check `src/` on GitHub or in the CRAN source tarball. Many R packages use Rcpp and have their algorithms in `.cpp` files. Look for R packages with a `src/` directory containing C++ code — these are wrapping candidates.
 - **Python packages:** Look for Cython (`.pyx` files), C extensions, or vendored C/C++ code. Check `setup.py` or `pyproject.toml` for compiled extension definitions.
-- **Standalone C++ libraries:** Some algorithms have reference implementations as standalone C++ projects.
+- **Standalone C++ libraries:** Search GitHub for `<algorithm-name> cpp` or `<algorithm-name> header-only`. Some algorithms have reference implementations as standalone C++ projects.
 
 ### Steps
 
