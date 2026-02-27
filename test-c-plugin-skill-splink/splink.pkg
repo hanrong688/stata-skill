@@ -1,0 +1,17 @@
+v 3
+d splink: Probabilistic record linkage using the Fellegi-Sunter model
+d
+d Full-fidelity implementation matching the Python splink package.
+d Features: configurable comparison levels, multiple comparison functions
+d (JW, Jaro, Levenshtein, DL, Jaccard, exact, numeric), multiple blocking
+d rules with OR logic, term frequency adjustments, null handling, pairwise
+d output, and cross-dataset linking.
+d
+d Distribution-Date: 20260223
+d
+f splink.ado
+f splink.sthlp
+f splink_plugin.darwin-arm64.plugin
+f splink_plugin.darwin-x86_64.plugin
+f splink_plugin.linux-x86_64.plugin
+f splink_plugin.windows-x86_64.plugin
