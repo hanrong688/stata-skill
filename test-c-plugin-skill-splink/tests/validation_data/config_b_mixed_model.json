@@ -7,7 +7,7 @@
     "entity_id"
   ],
   "sql_dialect": "duckdb",
-  "linker_uid": "nquxsajp",
+  "linker_uid": "al022kq6",
   "em_convergence": 0.0001,
   "max_iterations": 25,
   "bayes_factor_column_prefix": "bf_",

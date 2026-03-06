@@ -1,4 +1,4 @@
-*! version 4.1.0  28feb2026
+*! version 4.2.0  06mar2026
 *! Blocking rule statistics for probabilistic record linkage
 *! Reports pair counts per blocking rule from savepairs() output
 
@@ -10,7 +10,7 @@ program define splink_blockstats, rclass
     * Primary source: pairs CSV with match_key column
     preserve
     quietly {
-        import delimited `using', clear
+        import delimited `"`using'"', clear
 
         if _N == 0 {
             display as error "CSV file contains no data rows"
@@ -128,7 +128,7 @@ program define splink_blockstats, rclass
     if `ntop' > 0 {
         preserve
         quietly {
-            import delimited `using', clear
+            import delimited `"`using'"', clear
 
             * Compute block sizes: group by match_key and all blocking-related columns
             * Since we don't know exact block key columns, use match_key as block indicator

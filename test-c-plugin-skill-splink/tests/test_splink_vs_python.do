@@ -186,6 +186,63 @@ else {
 }
 restore
 
+* Gamma-level cross-validation: compare per-pair gamma vectors
+* Load Python gamma predictions and merge with Stata pairs
+preserve
+import delimited "`val_dir'/config_a_jw_city_gamma_predictions.csv", clear
+rename gamma_first_name py_gamma_fn
+rename gamma_last_name py_gamma_ln
+rename gamma_dob py_gamma_dob
+rename gamma_email py_gamma_email
+keep unique_id_l unique_id_r py_gamma_fn py_gamma_ln py_gamma_dob py_gamma_email
+tempfile py_gammas
+save `py_gammas'
+
+* Load Stata pairs
+import delimited "`pairs_a'", clear
+rename gamma_first_name st_gamma_fn
+rename gamma_last_name st_gamma_ln
+rename gamma_dob st_gamma_dob
+rename gamma_email st_gamma_email
+keep unique_id_l unique_id_r st_gamma_fn st_gamma_ln st_gamma_dob st_gamma_email
+
+* Merge on common pairs
+merge 1:1 unique_id_l unique_id_r using `py_gammas', keep(3) nogenerate
+local n_common = _N
+display as text "  Common pairs for gamma comparison: `n_common'"
+
+if `n_common' >= 5 {
+    * Check gamma agreement rate for each variable
+    gen byte fn_agree = (st_gamma_fn == py_gamma_fn)
+    gen byte ln_agree = (st_gamma_ln == py_gamma_ln)
+    gen byte dob_agree = (st_gamma_dob == py_gamma_dob)
+    gen byte email_agree = (st_gamma_email == py_gamma_email)
+
+    summarize fn_agree, meanonly
+    local fn_rate = r(mean)
+    summarize ln_agree, meanonly
+    local ln_rate = r(mean)
+    summarize dob_agree, meanonly
+    local dob_rate = r(mean)
+    summarize email_agree, meanonly
+    local email_rate = r(mean)
+
+    local avg_agree = (`fn_rate' + `ln_rate' + `dob_rate' + `email_rate') / 4
+    display as text "  Gamma agreement: fn=`=string(`fn_rate',"%5.3f")' ln=`=string(`ln_rate',"%5.3f")' dob=`=string(`dob_rate',"%5.3f")' email=`=string(`email_rate',"%5.3f")'"
+    display as text "  Average gamma agreement: `=string(`avg_agree',"%5.3f")'"
+
+    if `avg_agree' > 0.7 {
+        _vtest_pass "Config A: average gamma agreement > 0.70 (`=string(`avg_agree',"%5.3f")')"
+    }
+    else {
+        _vtest_fail "Config A: average gamma agreement = `=string(`avg_agree',"%5.3f")' (< 0.70)"
+    }
+}
+else {
+    _vtest_pass "Config A: too few common pairs for gamma comparison (`n_common')"
+}
+restore
+
 * Model round-trip: savemodel -> loadmodel -> re-score should produce same weights
 tempfile model_a
 splink first_name last_name dob email, ///
@@ -220,11 +277,11 @@ display as text "{hline 60}"
 
 use `input_data', clear
 
-* Python used: JW for first_name/last_name, Levenshtein for dob, JW for email
+* Python used: JW for first_name, Levenshtein for last_name, JW for dob, JW for email
 splink first_name last_name dob email, ///
     block(city) gen(stata_cid) ///
-    compmethod(jw jw lev jw) ///
-    complevels("0.92,0.80|0.92,0.80|1,2|0.92,0.80") ///
+    compmethod(jw lev jw jw) ///
+    complevels("0.92,0.80|1,2|0.92,0.80|0.92,0.80") ///
     prior(0.05) threshold(0.5) ///
     uestimate umaxpairs(100000) useed(42) ///
     verbose replace
@@ -350,10 +407,11 @@ display as text "{hline 60}"
 
 use `input_data', clear
 
+* Python used: JW for first_name, JW for last_name, DateOfBirthComparison for dob
 splink first_name last_name dob, ///
     block(city) gen(stata_cid) ///
-    compmethod(jw jw jw) ///
-    complevels("0.92,0.80|0.92,0.80|0.92,0.80") ///
+    compmethod(jw jw dob) ///
+    complevels("0.92,0.80|0.92,0.80|") ///
     prior(0.05) threshold(0.5) ///
     uestimate umaxpairs(100000) useed(42) ///
     verbose replace

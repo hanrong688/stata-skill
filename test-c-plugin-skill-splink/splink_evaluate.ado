@@ -1,4 +1,4 @@
-*! version 4.1.0  28feb2026
+*! version 4.2.0  06mar2026
 *! Evaluation metrics for probabilistic record linkage
 *! Computes precision, recall, F1 at pair level from labeled data
 *! Subcommands: (default) metrics, histogram, unlinkables, sweep
@@ -30,7 +30,7 @@ program define splink_evaluate, rclass
     * Load pairwise output
     preserve
     quietly {
-        import delimited `using', clear
+        import delimited `"`using'"', clear
 
         capture confirm variable match_probability
         if _rc {
@@ -48,6 +48,11 @@ program define splink_evaluate, rclass
 
         * True match from labels
         rename `true' _true_id
+        capture confirm numeric variable _true_id
+        if _rc {
+            display as error "true label variable `true' must be numeric (0/1)"
+            exit 198
+        }
     }
 
     * Compute confusion matrix
@@ -113,7 +118,7 @@ program define _splink_eval_histogram
 
     preserve
     quietly {
-        import delimited `using', clear
+        import delimited `"`using'"', clear
 
         capture confirm variable match_weight
         if _rc {
@@ -168,7 +173,7 @@ program define _splink_eval_unlinkables, rclass
 
     preserve
     quietly {
-        import delimited `using', clear
+        import delimited `"`using'"', clear
 
         * Determine ID columns
         local id_l "unique_id_l"
@@ -183,6 +188,12 @@ program define _splink_eval_unlinkables, rclass
     capture confirm variable `id_l'
     if _rc {
         display as error "CSV must contain unique_id_l/unique_id_r or obs_a/obs_b columns"
+        restore
+        exit 198
+    }
+    capture confirm variable `id_r'
+    if _rc {
+        display as error "CSV must contain `id_r' column"
         restore
         exit 198
     }
@@ -208,7 +219,7 @@ program define _splink_eval_unlinkables, rclass
         tempfile left_ids
         save `left_ids'
         restore, preserve
-        import delimited `using', clear
+        import delimited `"`using'"', clear
         keep if match_probability >= `threshold'
         keep `id_r'
         rename `id_r' _id
@@ -219,13 +230,13 @@ program define _splink_eval_unlinkables, rclass
 
         * Get full range of IDs from the original dataset
         restore, preserve
-        import delimited `using', clear
+        import delimited `"`using'"', clear
         keep `id_l'
         rename `id_l' _id
         tempfile all_left
         save `all_left'
         restore, preserve
-        import delimited `using', clear
+        import delimited `"`using'"', clear
         keep `id_r'
         rename `id_r' _id
         append using `all_left'
@@ -265,7 +276,7 @@ program define _splink_eval_sweep, rclass
 
     preserve
     quietly {
-        import delimited `using', clear
+        import delimited `"`using'"', clear
 
         capture confirm variable `true'
         if _rc {

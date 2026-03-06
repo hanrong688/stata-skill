@@ -1,4 +1,4 @@
-*! version 4.1.0  28feb2026
+*! version 4.2.0  06mar2026
 *! Threshold sweep for probabilistic record linkage
 *! Computes precision/recall at multiple thresholds for curve generation
 
@@ -14,8 +14,13 @@ program define splink_truthspace, rclass
         exit 198
     }
 
+    if `minthreshold' >= `maxthreshold' {
+        display as error "minthreshold() must be less than maxthreshold()"
+        exit 198
+    }
+
     preserve
-    quietly import delimited `using', clear
+    quietly import delimited `"`using'"', clear
 
     capture confirm variable match_probability
     if _rc {
@@ -34,7 +39,7 @@ program define splink_truthspace, rclass
 
     * Run sweep, accumulate results in locals
     local best_f1 = 0
-    local best_thresh = 0
+    local best_thresh = `minthreshold'
 
     forvalues s = 1/`steps' {
         local thresh = `minthreshold' + (`s' - 0.5) * `step_size'

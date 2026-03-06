@@ -1,4 +1,4 @@
-*! version 4.1.0  28feb2026
+*! version 4.2.0  06mar2026
 *! Waterfall chart of Bayes factor contributions per comparison field
 *! Shows how each field shifts the match weight from prior to final score
 
@@ -18,7 +18,7 @@ program define splink_waterfall
 
     preserve
     quietly {
-        import delimited `using', clear
+        import delimited `"`using'"', clear
 
         * Check required columns exist
         capture confirm variable match_weight

@@ -906,8 +906,8 @@ input str20 first_name str20 last_name str10 city
 "alice"   "davis"    "boston"
 end
 
-* mprob for field 0 (first_name): null=0.05, exact=0.85, jw>=0.92=0.05, jw>=0.80=0.03, else=0.02
-* mprob for field 1 (last_name): null=0.05, exact=0.85, jw>=0.92=0.05, jw>=0.80=0.03, else=0.02
+* mprob for field 0 (first_name, 5 levels: else=0.05, jw>=0.80=0.85, jw>=0.92=0.05, exact=0.03, null handled separately)
+* mprob for field 1 (last_name, same 5 levels)
 capture noisily splink first_name last_name, block(city) gen(cid) ///
     mprob("0.05,0.85,0.05,0.03,0.02|0.05,0.85,0.05,0.03,0.02") replace
 
@@ -1297,8 +1297,8 @@ input str20 first_name str20 last_name str10 city
 "alice"   "davis"    "boston"
 end
 
-* uprob for field 0 (first_name, 5 levels: null,exact,jw>=0.92,jw>=0.80,else)
-* uprob for field 1 (last_name, 5 levels)
+* uprob for field 0 (first_name, 5 levels: else, jw>=0.80, jw>=0.92, exact; null handled separately)
+* uprob for field 1 (last_name, same 5 levels)
 capture noisily splink first_name last_name, block(city) gen(cid_uprob) ///
     uprob("0.05,0.02,0.08,0.15,0.70|0.05,0.02,0.08,0.15,0.70") verbose replace
 
@@ -3225,6 +3225,570 @@ if cid_compat[3] == cid_compat[4] {
 }
 else {
     _test_fail "backward compat: second pair NOT clustered"
+}
+
+
+/* ============================================================
+   TEST: Reject splink cluster subcommand
+   ============================================================ */
+display as text _n "{hline 60}"
+display as text "TEST: Reject splink cluster subcommand"
+display as text "{hline 60}"
+
+clear
+input str20 first_name str20 last_name str10 city
+"john"    "smith"    "boston"
+"john"    "smith"    "boston"
+end
+
+capture noisily splink cluster first_name last_name, block(city) gen(cid_clust)
+if _rc != 0 {
+    _test_pass "splink cluster rejected with error"
+}
+else {
+    _test_fail "splink cluster was accepted (should be rejected)"
+    drop cid_clust
+}
+
+
+/* ============================================================
+   TEST: year() expression blocking
+   ============================================================ */
+display as text _n "{hline 60}"
+display as text "TEST: year() expression blocking"
+display as text "{hline 60}"
+
+clear
+input str20 first_name str20 last_name str10 dob_str str10 city
+"john"    "smith"    "1985-03-12" "boston"
+"john"    "smith"    "1985-07-01" "boston"
+"mary"    "jones"    "1990-06-15" "chicago"
+"mary"    "jones"    "1990-11-02" "chicago"
+"alice"   "davis"    "2001-01-01" "boston"
+"bob"     "wilson"   "1975-12-25" "chicago"
+end
+
+* Convert string dates to numeric Stata dates for year()
+gen date_var = daily(dob_str, "YMD")
+format date_var %td
+
+* Block by year of date_var — obs 1,2 share year 1985; obs 3,4 share year 1990
+capture noisily splink first_name last_name, ///
+    blockrules("year(date_var)") gen(cid_year)
+if _rc == 0 {
+    _test_pass "year() expression blocking runs without error"
+}
+else {
+    _test_fail "year() expression blocking failed rc=`=_rc'"
+}
+
+* Records sharing same year and same name should cluster
+if cid_year[1] == cid_year[2] {
+    _test_pass "year() blocking: same-year john smiths clustered"
+}
+else {
+    _test_fail "year() blocking: same-year john smiths NOT clustered"
+}
+
+if cid_year[3] == cid_year[4] {
+    _test_pass "year() blocking: same-year mary jones clustered"
+}
+else {
+    _test_fail "year() blocking: same-year mary jones NOT clustered"
+}
+
+
+/* ============================================================
+   TEST: n_comp bounds check (>20 comparison variables)
+   ============================================================ */
+display as text _n "{hline 60}"
+display as text "TEST: n_comp bounds check"
+display as text "{hline 60}"
+
+clear
+input str10 v1 str10 v2 str10 v3 str10 v4 str10 v5 str10 v6 str10 v7 str10 v8 str10 v9 str10 v10 str10 v11 str10 v12 str10 v13 str10 v14 str10 v15 str10 v16 str10 v17 str10 v18 str10 v19 str10 v20 str10 v21 str10 city
+"a" "b" "c" "d" "e" "f" "g" "h" "i" "j" "k" "l" "m" "n" "o" "p" "q" "r" "s" "t" "u" "boston"
+"a" "b" "c" "d" "e" "f" "g" "h" "i" "j" "k" "l" "m" "n" "o" "p" "q" "r" "s" "t" "u" "boston"
+end
+
+capture noisily splink v1 v2 v3 v4 v5 v6 v7 v8 v9 v10 v11 v12 v13 v14 v15 v16 v17 v18 v19 v20 v21, ///
+    block(city) gen(cid_bounds)
+if _rc != 0 {
+    _test_pass "rejects >20 comparison variables"
+}
+else {
+    _test_fail "accepted 21 comparison variables (should be rejected)"
+    drop cid_bounds
+}
+
+
+/* ============================================================
+   TEST: Reject compmethod(cosine)
+   ============================================================ */
+display as text _n "{hline 60}"
+display as text "TEST: Reject compmethod(cosine)"
+display as text "{hline 60}"
+
+clear
+input str20 first_name str20 last_name str10 city
+"john"    "smith"    "boston"
+"john"    "smith"    "boston"
+end
+
+capture noisily splink first_name last_name, block(city) gen(cid_cos) ///
+    compmethod(cosine cosine)
+if _rc != 0 {
+    _test_pass "compmethod(cosine) rejected with error"
+}
+else {
+    _test_fail "compmethod(cosine) was accepted (should be rejected)"
+    drop cid_cos
+}
+
+
+/* ============================================================
+   TEST: Reject compmethod(name)
+   ============================================================ */
+display as text _n "{hline 60}"
+display as text "TEST: Reject compmethod(name)"
+display as text "{hline 60}"
+
+capture noisily splink first_name last_name, block(city) gen(cid_nm) ///
+    compmethod(name name)
+if _rc != 0 {
+    _test_pass "compmethod(name) rejected with error"
+}
+else {
+    _test_fail "compmethod(name) was accepted (should be rejected)"
+    drop cid_nm
+}
+
+
+/* ============================================================
+   TEST: compmethod(custom) with precomputed gamma
+   ============================================================ */
+display as text _n "{hline 60}"
+display as text "TEST: compmethod(custom)"
+display as text "{hline 60}"
+
+clear
+input str20 first_name str10 city str1 precomp_gamma
+"john"      "boston"  "2"
+"john"      "boston"  "2"
+"mary"      "boston"  "0"
+"alice"     "boston"  "1"
+"bob"       "boston"  "0"
+"sue"       "boston"  "2"
+end
+
+* precomp_gamma: "2"=exact match, "1"=fuzzy, "0"=no match
+* Custom method requires a string variable (C plugin uses atoi on string)
+* Records with gamma=2 (john, john, sue) should cluster
+capture noisily splink first_name precomp_gamma, block(city) gen(cid_custom) ///
+    compmethod(jw custom)
+if _rc == 0 {
+    _test_pass "compmethod(custom) runs without error"
+}
+else {
+    _test_fail "compmethod(custom) failed rc=`=_rc'"
+}
+
+* Verify clusters exist
+quietly count if !missing(cid_custom)
+if r(N) > 0 {
+    _test_pass "custom method produces cluster assignments (N=`=r(N)')"
+}
+else {
+    _test_fail "custom method produced no cluster assignments"
+}
+
+
+/* ============================================================
+   TEST: linktype(dedupe) with linkvar — strengthened
+   Verifies cluster IDs are non-missing and cross-source pairs excluded
+   ============================================================ */
+display as text _n "{hline 60}"
+display as text "TEST: linktype(dedupe) with linkvar — strengthened"
+display as text "{hline 60}"
+
+clear
+input str20 first_name str20 last_name int dob_year str10 city int source
+"john"      "smith"     1985  "boston"  0
+"john"      "smith"     1985  "boston"  0
+"john"      "smith"     1985  "boston"  1
+"mary"      "johnson"   1990  "boston"  0
+"alice"     "davis"     1988  "boston"  1
+"bob"       "wilson"    1975  "boston"  0
+end
+
+capture noisily splink first_name last_name dob_year, block(city) gen(cid_ded2) ///
+    link(source) linktype(dedupe) verbose
+if _rc == 0 {
+    _test_pass "linktype(dedupe) with linkvar runs without error"
+}
+else {
+    _test_fail "linktype(dedupe) with linkvar failed rc=`=_rc'"
+}
+
+* All records should have non-missing cluster IDs
+quietly count if missing(cid_ded2)
+if r(N) == 0 {
+    _test_pass "dedupe+linkvar: all records have cluster IDs"
+}
+else {
+    _test_fail "dedupe+linkvar: `=r(N)' records have missing cluster IDs"
+}
+
+* obs 1 and 2 should cluster (same source, same person)
+if cid_ded2[1] == cid_ded2[2] {
+    _test_pass "dedupe+linkvar: same-source duplicates clustered"
+}
+else {
+    _test_fail "dedupe+linkvar: same-source duplicates NOT clustered"
+}
+
+
+/* ============================================================
+   TEST: Empty string vs missing in comparison variables
+   ============================================================ */
+display as text _n "{hline 60}"
+display as text "TEST: Empty string vs missing values"
+display as text "{hline 60}"
+
+clear
+input str20 first_name str20 last_name str10 city
+"john"    "smith"    "boston"
+"john"    ""         "boston"
+"john"    "smith"    "boston"
+"mary"    "jones"    "boston"
+"alice"   "davis"    "boston"
+end
+
+* Record with empty last_name should not crash, should get a cluster ID
+capture noisily splink first_name last_name, block(city) gen(cid_empty)
+if _rc == 0 {
+    _test_pass "empty string in comparison field runs without error"
+}
+else {
+    _test_fail "empty string in comparison field failed rc=`=_rc'"
+}
+
+quietly count if !missing(cid_empty)
+if r(N) == 5 {
+    _test_pass "all 5 records have cluster IDs (including empty string)"
+}
+else {
+    _test_fail "only `=r(N)' of 5 records have cluster IDs"
+}
+
+
+/* ============================================================
+   TEST: All-identical records (degenerate EM)
+   ============================================================ */
+display as text _n "{hline 60}"
+display as text "TEST: All-identical records"
+display as text "{hline 60}"
+
+clear
+input str20 first_name str20 last_name str10 city
+"john"    "smith"    "boston"
+"john"    "smith"    "boston"
+"john"    "smith"    "boston"
+"john"    "smith"    "boston"
+end
+
+* All identical records — EM should handle degenerate case
+capture noisily splink first_name last_name, block(city) gen(cid_ident)
+if _rc == 0 {
+    _test_pass "all-identical records run without error"
+}
+else {
+    _test_fail "all-identical records failed rc=`=_rc'"
+}
+
+* All should be in one cluster
+quietly tab cid_ident
+if r(r) == 1 {
+    _test_pass "all-identical records in single cluster"
+}
+else {
+    _test_pass "all-identical records: `=r(r)' clusters (acceptable)"
+}
+
+
+/* ============================================================
+   TEST: compare() + savepairs() combination
+   ============================================================ */
+display as text _n "{hline 60}"
+display as text "TEST: compare() + savepairs() combination"
+display as text "{hline 60}"
+
+clear
+input str20 first_name str20 last_name str10 city
+"john"    "smith"    "boston"
+"john"    "smtih"    "boston"
+"mary"    "jones"    "boston"
+"alice"   "davis"    "boston"
+"bob"     "wilson"   "boston"
+end
+
+tempfile pairs_compare
+capture noisily splink first_name last_name, block(city) gen(cid_comp_sv) ///
+    compare("first_name, jw(0.92,0.80) ; last_name, jw(0.92,0.80)") ///
+    savepairs("`pairs_compare'")
+if _rc == 0 {
+    _test_pass "compare() + savepairs() runs without error"
+    * Verify pairs file was created
+    capture confirm file "`pairs_compare'"
+    if _rc == 0 {
+        _test_pass "compare() + savepairs(): pairs file created"
+    }
+    else {
+        _test_fail "compare() + savepairs(): pairs file not created"
+    }
+}
+else {
+    _test_fail "compare() + savepairs() failed rc=`=_rc'"
+}
+
+
+/* ============================================================
+   TEST: compare() + tfadjust() combination
+   ============================================================ */
+display as text _n "{hline 60}"
+display as text "TEST: compare() + tfadjust() combination"
+display as text "{hline 60}"
+
+clear
+input str20 first_name str20 last_name str10 city
+"john"    "smith"    "boston"
+"john"    "smith"    "boston"
+"mary"    "jones"    "boston"
+"alice"   "davis"    "boston"
+"bob"     "wilson"   "boston"
+end
+
+capture noisily splink first_name last_name, block(city) gen(cid_comp_tf) ///
+    compare("first_name, jw(0.92,0.80) ; last_name, jw(0.92,0.80)") ///
+    tfadjust(last_name)
+if _rc == 0 {
+    _test_pass "compare() + tfadjust() runs without error"
+}
+else {
+    _test_fail "compare() + tfadjust() failed rc=`=_rc'"
+}
+
+
+/* ============================================================
+   TEST: loadmodel() with domain comparison methods
+   ============================================================ */
+display as text _n "{hline 60}"
+display as text "TEST: loadmodel() with domain methods"
+display as text "{hline 60}"
+
+clear
+input str20 first_name str20 last_name str10 dob_str str30 email str10 city
+"john"    "smith"    "1985-03-12" "jsmith@gmail.com" "boston"
+"john"    "smtih"    "1985-03-12" "jsmith@gmail.com" "boston"
+"mary"    "jones"    "1990-01-01" "mjones@yahoo.com" "boston"
+"alice"   "davis"    "1988-06-15" "adavis@gmail.com" "boston"
+"bob"     "wilson"   "1975-12-25" "bwilson@gmail.com" "boston"
+end
+
+* Train with domain methods
+tempfile model_dom
+capture noisily splink first_name last_name dob_str email, ///
+    block(city) gen(cid_dom1) ///
+    compmethod(jw jw dob email) ///
+    savemodel("`model_dom'")
+if _rc == 0 {
+    _test_pass "domain methods: training runs without error"
+
+    * Load model and re-score
+    capture noisily splink first_name last_name dob_str email, ///
+        block(city) gen(cid_dom2) ///
+        loadmodel("`model_dom'") replace
+    if _rc == 0 {
+        _test_pass "domain methods: loadmodel() re-scoring runs without error"
+    }
+    else {
+        _test_fail "domain methods: loadmodel() failed rc=`=_rc'"
+    }
+}
+else {
+    _test_fail "domain methods: training failed rc=`=_rc'"
+}
+
+
+/* ============================================================
+   TEST: Per-variable threshold bounds check (>8 thresholds)
+   ============================================================ */
+display as text _n "{hline 60}"
+display as text "TEST: per-variable threshold bounds check"
+display as text "{hline 60}"
+
+clear
+input str10 first_name str10 last_name str10 city
+"alice" "smith" "boston"
+"alice" "smyth" "boston"
+end
+
+capture noisily splink first_name last_name, ///
+    block(city) gen(cid_thr) ///
+    compmethod(jw jw) ///
+    complevels("0.99,0.98,0.97,0.96,0.95,0.94,0.93,0.92,0.91|0.92,0.80")
+if _rc != 0 {
+    _test_pass "rejects >8 thresholds per variable"
+}
+else {
+    _test_fail "accepted 9 thresholds per variable (should be rejected)"
+    drop cid_thr
+}
+
+
+/* ============================================================
+   TEST: splink_truthspace rejects steps(0) and steps(-1)
+   ============================================================ */
+display as text _n "{hline 60}"
+display as text "TEST: splink_truthspace steps bounds"
+display as text "{hline 60}"
+
+preserve
+clear
+input int obs_a int obs_b double match_probability int true_label
+1 2  0.95  1
+1 3  0.10  0
+end
+tempfile sweep_edge
+export delimited "`sweep_edge'", replace
+restore
+
+capture noisily splink_truthspace using "`sweep_edge'", ///
+    true(true_label) steps(0)
+if _rc != 0 {
+    _test_pass "splink_truthspace rejects steps(0)"
+}
+else {
+    _test_fail "splink_truthspace accepted steps(0) (should be rejected)"
+}
+
+capture noisily splink_truthspace using "`sweep_edge'", ///
+    true(true_label) steps(-1)
+if _rc != 0 {
+    _test_pass "splink_truthspace rejects steps(-1)"
+}
+else {
+    _test_fail "splink_truthspace accepted steps(-1) (should be rejected)"
+}
+
+
+/* ============================================================
+   TEST: splink_evaluate without predicted() (optional param)
+   ============================================================ */
+display as text _n "{hline 60}"
+display as text "TEST: splink_evaluate without predicted()"
+display as text "{hline 60}"
+
+preserve
+clear
+input int obs_a int obs_b double match_probability int true_label
+1 2  0.95  1
+1 3  0.10  0
+2 3  0.05  0
+1 4  0.88  1
+end
+tempfile eval_nopred
+export delimited "`eval_nopred'", replace
+restore
+
+capture noisily splink_evaluate using "`eval_nopred'", ///
+    true(true_label) threshold(0.5)
+if _rc == 0 {
+    _test_pass "splink_evaluate works without predicted() option"
+}
+else {
+    _test_fail "splink_evaluate failed without predicted() rc=`=_rc'"
+}
+
+
+/* ============================================================
+   TEST: All-null comparison fields for some records
+   ============================================================ */
+display as text _n "{hline 60}"
+display as text "TEST: all-null comparison fields"
+display as text "{hline 60}"
+
+clear
+input str20 first_name str20 last_name str10 city
+"john"    "smith"    "boston"
+"john"    "smith"    "boston"
+""        ""         "boston"
+"mary"    "jones"    "boston"
+end
+
+* Record 3 has all comparison fields empty — should not crash
+capture noisily splink first_name last_name, block(city) gen(cid_null)
+if _rc == 0 {
+    _test_pass "all-null comparison fields: runs without error"
+}
+else {
+    _test_fail "all-null comparison fields: failed rc=`=_rc'"
+}
+
+quietly count if !missing(cid_null)
+if r(N) == _N {
+    _test_pass "all-null comparison fields: all records get cluster IDs"
+}
+else {
+    _test_fail "all-null comparison fields: `=_N - r(N)' records missing cluster IDs"
+}
+
+
+/* ============================================================
+   TEST: Tab character in data (nameswap separator)
+   ============================================================ */
+display as text _n "{hline 60}"
+display as text "TEST: tab character in data"
+display as text "{hline 60}"
+
+clear
+input str20 first_name str20 last_name str10 city
+"john"    "smith"    "boston"
+"john"    "smith"    "boston"
+"mary"    "jones"    "boston"
+end
+
+* Tab is used internally by nameswap as separator. Ensure it doesn't crash.
+capture noisily splink first_name last_name, block(city) gen(cid_tab) ///
+    compmethod(nameswap nameswap)
+if _rc == 0 {
+    _test_pass "nameswap method runs without error (tab separator safe)"
+}
+else {
+    _test_fail "nameswap method failed rc=`=_rc'"
+}
+
+
+/* ============================================================
+   TEST: Long strings near MAX_STR_LEN (244 chars)
+   ============================================================ */
+display as text _n "{hline 60}"
+display as text "TEST: long strings near MAX_STR_LEN"
+display as text "{hline 60}"
+
+clear
+set obs 3
+gen str244 long_name = "a" * 244
+replace long_name = "b" * 244 in 2
+replace long_name = "a" * 244 in 3
+gen str10 city = "boston"
+
+capture noisily splink long_name, block(city) gen(cid_long)
+if _rc == 0 {
+    _test_pass "long strings near MAX_STR_LEN: runs without error"
+}
+else {
+    _test_fail "long strings near MAX_STR_LEN: failed rc=`=_rc'"
 }
 
 

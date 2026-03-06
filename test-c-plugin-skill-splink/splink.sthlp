@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 3.1.0  26feb2026}{...}
+{* *! version 4.2.0  28feb2026}{...}
 {viewerjumpto "Syntax" "splink##syntax"}{...}
 {viewerjumpto "Description" "splink##description"}{...}
 {viewerjumpto "Options" "splink##options"}{...}
@@ -8,6 +8,9 @@
 {viewerjumpto "Examples" "splink##examples"}{...}
 {viewerjumpto "Stored results" "splink##results"}{...}
 {viewerjumpto "Algorithm" "splink##algorithm"}{...}
+{viewerjumpto "Composition (And/Or/Not)" "splink##composition"}{...}
+{viewerjumpto "Scoring new records" "splink##newrecords"}{...}
+{viewerjumpto "Python compatibility" "splink##compat"}{...}
 
 {title:Title}
 
@@ -25,7 +28,7 @@
 {cmd:,} {opt gen:erate(newvar)} {opt block:var(varlist)}|{opt blockr:ules(string)} [{it:options}]
 
 {pstd}
-Subcommands: {bf:train}, {bf:predict}, {bf:cluster} (or none for legacy mode)
+Subcommands: {bf:train}, {bf:predict} (or none for legacy mode)
 
 {synoptset 30 tabbed}{...}
 {synopthdr}
@@ -48,15 +51,26 @@ Subcommands: {bf:train}, {bf:predict}, {bf:cluster} (or none for legacy mode)
 {syntab:Term frequency}
 {synopt:{opt tfa:djust(varlist)}}variables for term frequency adjustment{p_end}
 {synopt:{opt tfmin(#)}}minimum TF u-value; default is {bf:0.001}{p_end}
+{synopt:{opt tfw:eight(string)}}TF blending weight per var (0-1); default is {bf:1.0}{p_end}
+{synopt:{opt tfs:ource(varlist)}}source vars for TF computation (instead of comp vars){p_end}
+{synopt:{opt tfe:xactonly}}apply TF only to exact-match level{p_end}
 
 {syntab:Model}
 {synopt:{opt pr:ior(#)}}prior match probability; default is {bf:0.0001}{p_end}
 {synopt:{opt thr:eshold(#)}}match probability threshold; default is {bf:0.85}{p_end}
+{synopt:{opt clustert:hreshold(#)}}separate clustering threshold; default = threshold(){p_end}
+{synopt:{opt weightt:hreshold(#)}}threshold on match weight (log2 BF) instead of probability{p_end}
 {synopt:{opt max:iter(#)}}maximum EM iterations; default is {bf:25}{p_end}
 {synopt:{opt maxb:locksize(#)}}max records per block; 0 = no limit (default){p_end}
 {synopt:{opt nullw:eight(string)}}{bf:neutral} (default) or {bf:penalize}{p_end}
+{synopt:{opt nullm:ode(string)}}per-var null mode: "neutral penalize ..."{p_end}
 {synopt:{opt mprob(string)}}fixed m-probabilities per variable (pipe-separated){p_end}
 {synopt:{opt uprob(string)}}fixed u-probabilities per variable (pipe-separated){p_end}
+{synopt:{opt fixm:levels(string)}}per-level m fixing: "comp:level,level|..."{p_end}
+{synopt:{opt fixu:levels(string)}}per-level u fixing: "comp:level,level|..."{p_end}
+{synopt:{opt rec:all(#)}}recall for lambda estimation; default is {bf:1.0}{p_end}
+{synopt:{opt fixl:ambda}}prevent EM from updating lambda{p_end}
+{synopt:{opt emn:otf}}EM without term frequency adjustments{p_end}
 
 {syntab:u-estimation}
 {synopt:{opt ue:stimate}}estimate u via random sampling (Splink-style){p_end}
@@ -70,6 +84,14 @@ Subcommands: {bf:train}, {bf:predict}, {bf:cluster} (or none for legacy mode)
 {syntab:Model persistence}
 {synopt:{opt savem:odel(filename)}}save trained model parameters to JSON{p_end}
 {synopt:{opt loadm:odel(filename)}}load model parameters from JSON for scoring{p_end}
+
+{syntab:Clustering}
+{synopt:{opt clusterm:ethod(string)}}{bf:cc} (connected components, default) or {bf:bestlink}{p_end}
+{synopt:{opt salt(#)}}blocking salting partitions (0 = disabled){p_end}
+{synopt:{opt roundr:obin}}round-robin EM across blocking rules{p_end}
+{synopt:{opt emtol(#)}}EM convergence tolerance; default is {bf:0.00001}{p_end}
+{synopt:{opt timeu:nit(string)}}time unit for {bf:abs_time} method: {bf:seconds}, {bf:minutes}, {bf:hours}, {bf:days} (default){p_end}
+{synopt:{opt ml:abel(varname)}}label column for supervised m-estimation{p_end}
 
 {syntab:Output}
 {synopt:{opt savep:airs(filename)}}save pairwise scores to CSV{p_end}
@@ -120,7 +142,7 @@ and match_key (blocking rule index) for auditing and threshold tuning.{p_end}
 {phang2}{bf:Domain comparisons:} Specialized comparison functions for dates of birth,
 email addresses, postcodes, and name swaps provide Python splink v4 parity.{p_end}
 
-{phang2}{bf:Training pipeline:} Train/predict/cluster subcommands support the full
+{phang2}{bf:Training pipeline:} Train/predict subcommands support the full
 splink workflow. Save and load trained models as JSON for reproducibility.{p_end}
 
 {phang2}{bf:Fuzzy TF:} Term frequency adjustments apply to both exact and fuzzy matches,
@@ -256,8 +278,9 @@ preventing extreme weights from very rare values. Default is {bf:0.001}.
 automatically raised to ensure the EM algorithm can converge.
 
 {phang}
-{opt threshold(#)} specifies the match probability threshold (0 to 1, exclusive).
+{opt threshold(#)} specifies the match probability threshold (0 to 1, inclusive of 1).
 Pairs above this threshold are classified as matches. Default is {bf:0.85}.
+Use {opt threshold(1.0)} for deterministic linking (exact-match-only).
 
 {phang}
 {opt maxiter(#)} specifies the maximum number of EM iterations. Default is
@@ -265,20 +288,24 @@ Pairs above this threshold are classified as matches. Default is {bf:0.85}.
 
 {phang}
 {opt maxblocksize(#)} specifies the maximum number of records per block.
-Blocks exceeding this limit are truncated with a warning. Default is {bf:5000}.
+Blocks exceeding this limit are truncated with a warning. Default is {bf:5000}
+(set in the .ado wrapper; the C plugin default is 0/no limit).
 Set to {bf:0} for no limit (all records in the block are used, which may
 be very slow for large blocks).
 
 {phang}
 {opt mprob(string)} specifies fixed m-probabilities per comparison variable.
 Probabilities are pipe-separated per variable, comma-separated per level within
-each variable. Level order is: null, exact, fuzzy1, fuzzy2, ..., else.
+each variable. Level order is: else, fuzzy1 (lowest quality), ..., fuzzyN
+(highest quality), exact. Null is handled separately via {opt nullweight()}
+and should NOT appear in mprob()/uprob().
 When specified, EM does not update the m-probabilities for that variable.
 
 {pstd}
-Example: {cmd:mprob("0.05,0.85,0.05,0.03,0.02|0.05,0.90,0.03,0.02")} fixes
-m-probabilities for variables 1 (5 levels) and 2 (4 levels). Leave a segment
-empty to allow EM estimation for that variable.
+Example: {cmd:mprob("0.02,0.08,0.15,0.75|0.05,0.10,0.85")} fixes
+m-probabilities for variables 1 (4 levels: else=0.02, fuzzy1=0.08,
+fuzzy2=0.15, exact=0.75) and 2 (3 levels: else=0.05, fuzzy1=0.10,
+exact=0.85). Leave a segment empty to allow EM estimation for that variable.
 
 {phang}
 {opt uprob(string)} specifies fixed u-probabilities, with the same format as
@@ -366,16 +393,27 @@ longer strings and multi-word fields.{p_end}
 {p2col:{bf:exact}}Binary exact match only (match or no match). No fuzzy thresholds.{p_end}
 {p2col:{bf:numeric}}Numeric absolute difference. Default for numeric variables.
 Thresholds are maximum allowed differences.{p_end}
-{p2col:{bf:dob}}Date of birth comparison (YYYY-MM-DD strings). Levels: exact, year+month,
-year-only, else.{p_end}
-{p2col:{bf:email}}Email address comparison. Levels: exact, username-exact, domain-only, else.{p_end}
+{p2col:{bf:cosine}}Cosine similarity on character bigrams (0-1). Alternative to Jaccard.{p_end}
+{p2col:{bf:pctdiff}}Percentage difference for numeric variables: |a-b|/max(|a|,|b|).{p_end}
+{p2col:{bf:intersect}}Token intersection for space-delimited values. Levels by overlap count.{p_end}
+{p2col:{bf:dob}}Date of birth comparison (YYYY-MM-DD strings). 6 levels: exact, DL<=1,
+<=1 month, <=1 year, <=10 years, else.{p_end}
+{p2col:{bf:email}}Email address comparison. Levels: exact, username-exact, JW-username,
+domain-only, else.{p_end}
 {p2col:{bf:postcode}}Postcode comparison. Levels: exact, sector, district, area, else.{p_end}
-{p2col:{bf:nameswap}}Name swap detection (requires two name fields via compare()). Checks
-both orderings plus JW fuzzy.{p_end}
+{p2col:{bf:nameswap}}Forename/surname comparison (requires two name fields via compare()). 6
+levels: exact-normal, exact-swapped, JW>=t1-normal, JW>=t1-swapped, JW>=t2-either, else.{p_end}
+{p2col:{bf:name}}Name with phonetic matching (Double Metaphone + Jaro-Winkler). 5 levels:
+exact, JW>=0.92, JW>=0.88, JW>=0.70 or metaphone match, else.{p_end}
 {p2col:{bf:abs_date}}Absolute date difference on Stata numeric dates.{p_end}
+{p2col:{bf:abs_time}}Absolute time difference on Stata %tc datetime values. Thresholds
+are in the unit specified by {opt timeunit()}: {bf:seconds}, {bf:minutes}, {bf:hours},
+or {bf:days} (default). Useful for datetime fields stored as Stata %tc (milliseconds since
+01jan1960 00:00:00).{p_end}
 {p2col:{bf:distance_km}}Haversine distance in km from lat/lon pairs. Requires two numeric
 variables via {opt compare()}. Thresholds are maximum distances in km.{p_end}
-{p2col:{bf:custom}}User-precomputed gamma levels. The variable holds integer level values.{p_end}
+{p2col:{bf:custom}}User-precomputed gamma levels. The variable holds integer level values.
+See {help splink##composition:composition}.{p_end}
 {p2line}
 
 {pstd}
@@ -410,7 +448,7 @@ minimum similarity values (highest first). For distance methods ({bf:lev},
 {pstd}{bf:Cross-dataset linking}{p_end}
 {phang2}{cmd:. use dataset_a, clear}{p_end}
 {phang2}{cmd:. append using dataset_b, generate(source)}{p_end}
-{phang2}{cmd:. splink first_name last_name dob, block(last_name) gen(entity_id) link(source)}{p_end}
+{phang2}{cmd:. splink first_name last_name dob, block(last_name) gen(entity_id) linkvar(source)}{p_end}
 
 {pstd}{bf:Semicolon-separated blocking rules}{p_end}
 {phang2}{cmd:. splink first_name last_name, blockrules(last_name ; dob_year city ; first_name dob) gen(cid)}{p_end}
@@ -519,8 +557,10 @@ Model files are JSON matching the Python splink schema, containing
 {it:m_probability}/{it:u_probability} arrays.
 
 {pstd}
-See also: {help splink_evaluate}, {help splink_truthspace}, {help splink_cluster_metrics}
-for post-linkage evaluation tools.
+See also: {help splink_evaluate}, {help splink_truthspace}, {help splink_cluster_metrics},
+{help splink_emhistory}, {help splink_graph_metrics}, {help splink_cluster_studio},
+{help splink_blockstats}, {help splink_waterfall}, {help splink_muparam}, {help splink_compare}
+for post-linkage evaluation and visualization tools.
 
 {marker algorithm}{...}
 {title:Algorithm}
@@ -561,6 +601,73 @@ rule with the estimated parameters and prior.{p_end}
 {phang2}7. {bf:Clustering}: Pairs above the threshold are linked using
 union-find, producing connected components as entity clusters.{p_end}
 
+{marker remarks}{...}
+{title:Remarks}
+
+{pstd}
+{bf:Unicode limitation:} String comparison functions (Jaro-Winkler, Levenshtein,
+Damerau-Levenshtein, Jaccard) operate at the byte level. For ASCII text this is
+correct, but multi-byte UTF-8 characters (accented names like "Müller",
+CJK characters) may produce incorrect similarity scores. If your data contains
+non-ASCII characters, consider normalizing to ASCII before comparison or using
+{opt compmethod(exact)} for affected fields.
+
+{marker composition}{...}
+{title:Replicating Python Composition (And/Or/Not)}
+
+{pstd}
+Python splink's {bf:And()}, {bf:Or()}, {bf:Not()} compose comparison levels. Stata
+achieves the same through the {bf:custom} comparison method, which passes a
+user-precomputed gamma variable directly:
+
+{phang2}{cmd:. * Python: And(jw("name") > 0.9, abs_diff("age") <= 2)}{p_end}
+{phang2}{cmd:. * Stata equivalent:}{p_end}
+{phang2}{cmd:. gen gamma_composite = (ustrsimilar(name_l, name_r) > 0.9) & (abs(age_l - age_r) <= 2)}{p_end}
+{phang2}{cmd:. splink ..., compmethod(... custom) ...}{p_end}
+
+{pstd}
+The {bf:custom} method passes the variable's values directly as gamma levels
+(0, 1, 2, ...) without any internal comparison. This enables arbitrary
+compound conditions.
+
+{marker newrecords}{...}
+{title:Scoring New Records Against an Existing Model}
+
+{pstd}
+Python splink's {bf:find_matches_to_new_records()} scores new records against
+an existing model. Stata achieves the same workflow:
+
+{phang2}1. Train a model on original data and save it:{p_end}
+{phang2}{cmd:. splink train name city dob, block(state) gen(cid) savemodel(model.json)}{p_end}
+
+{phang2}2. Append new records and mark the source:{p_end}
+{phang2}{cmd:. gen source = "original"}{p_end}
+{phang2}{cmd:. append using newdata}{p_end}
+{phang2}{cmd:. replace source = "new" if missing(source)}{p_end}
+
+{phang2}3. Score using the saved model with link mode:{p_end}
+{phang2}{cmd:. splink predict name city dob, block(state) gen(cid2) loadmodel(model.json) linkvar(source) linktype(link)}{p_end}
+
+{pstd}
+This generates pairs only between "original" and "new" records, scoring them
+with the pre-trained parameters.
+
+{marker postcodedist}{...}
+{title:Postcode and Distance Comparisons}
+
+{pstd}
+Python splink's {bf:PostcodeComparison} with {bf:km_thresholds} integrates
+geographic distance into postcode matching. Stata handles this through
+separate comparison variables:
+
+{phang2}{cmd:. * Use postcode as one comparison variable}{p_end}
+{phang2}{cmd:. * Use distance_km as another with lat/lon input}{p_end}
+{phang2}{cmd:. splink ..., compmethod(postcode distance_km) ...}{p_end}
+
+{pstd}
+The {bf:distance_km} method computes Haversine distances from tab-separated
+lat/lon strings and applies user-specified thresholds.
+
 {title:References}
 
 {phang}
@@ -572,6 +679,20 @@ Fellegi, I.P. and A.B. Sunter. 1969. A theory for record linkage.
 Splink: Free software for probabilistic record linkage at scale.
 {browse "https://github.com/moj-analytical-services/splink"}
 {p_end}
+
+{marker compat}{...}
+{title:Python splink Compatibility}
+
+{pstd}
+This Stata implementation targets feature parity with Python splink v4.0.15.
+See {bf:FEATURE_PARITY.md} for a comprehensive comparison of every feature,
+behavioral differences, and workarounds for features that require different
+approaches in Stata.
+
+{pstd}
+Key differences: string comparisons operate at byte level (not Unicode),
+cosine similarity uses string bigrams (not pre-computed arrays), and
+composition (And/Or/Not) uses the {bf:custom} method with precomputed gammas.
 
 {title:Author}
 

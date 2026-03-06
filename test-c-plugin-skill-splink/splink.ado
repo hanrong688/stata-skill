@@ -1,4 +1,4 @@
-*! version 4.0.0  27feb2026
+*! version 4.2.0  06mar2026
 *! Probabilistic record linkage using the Fellegi-Sunter model
 *! Full-fidelity implementation matching the Python splink v4 package
 *! Supports: configurable comparison levels, multiple comparison functions,
@@ -137,12 +137,6 @@ program define splink, rclass
     local compvars `varlist'
     local n_comp : word count `compvars'
 
-    * Bounds check: max 20 comparison variables (C plugin limit)
-    if `n_comp' > 20 {
-        display as error "too many comparison variables (`n_comp'); maximum is 20"
-        exit 198
-    }
-
     * --- Parse compare() option (overrides compvars/compmethod/complevels) ---
     if `"`compare'"' != "" {
         local compvars ""
@@ -278,6 +272,12 @@ program define splink, rclass
             }
         }
         local comp_methods = strtrim("`comp_methods'")
+    }
+
+    * Bounds check: max 20 comparison variables (C plugin limit)
+    if `n_comp' > 20 {
+        display as error "too many comparison variables (`n_comp'); maximum is 20"
+        exit 198
     }
 
     * Validate method count matches variable count
@@ -709,7 +709,7 @@ program define splink, rclass
                 quietly {
                     gen long _tf_n = 1
                     collapse (count) _tf_n, by(`v')
-                    egen long _tf_total = total(_tf_n)
+                    egen double _tf_total = total(_tf_n)
                     gen double _tf_freq = _tf_n / _tf_total
                     rename `v' _tf_value
                     keep _tf_value _tf_freq
@@ -722,7 +722,7 @@ program define splink, rclass
                     gen str50 _tf_value = string(`v')
                     gen long _tf_n = 1
                     collapse (count) _tf_n, by(_tf_value)
-                    egen long _tf_total = total(_tf_n)
+                    egen double _tf_total = total(_tf_n)
                     gen double _tf_freq = _tf_n / _tf_total
                     keep _tf_value _tf_freq
                     export delimited _tf_value _tf_freq using "`tf_file_`i''", replace
@@ -853,6 +853,7 @@ program define splink, rclass
         * Per-comparison null mode
         if "`nullmode'" != "" {
             local _nm_val : word `i' of `nullmode'
+            local _nm_val = lower("`_nm_val'")
             if "`_nm_val'" == "neutral" {
                 file write `cfh' "null_mode=0" _n
             }
@@ -871,6 +872,10 @@ program define splink, rclass
         if "`mc'" == "18" {
             local _tu = lower("`timeunit'")
             if "`_tu'" == "" local _tu = "days"
+            if !inlist("`_tu'", "seconds", "minutes", "hours", "days") {
+                display as error "timeunit() must be: seconds, minutes, hours, or days"
+                exit 198
+            }
             file write `cfh' "time_unit=`_tu'" _n
         }
 
@@ -997,9 +1002,11 @@ program define splink, rclass
 
         * Rewrite mode, savepairs, and blocking for gamma-only pass
         * Override blocking to use label column so same-label pairs are compared
+        * Must re-enter [general] section since file may end in [comparison_N]
         tempname gcfh
         file open `gcfh' using "`gamma_config'", write append
-        file write `gcfh' _n "mode=3" _n
+        file write `gcfh' _n "[general]" _n
+        file write `gcfh' "mode=3" _n
         file write `gcfh' "save_pairs=`gamma_pairs'" _n
         file write `gcfh' "n_block_rules=1" _n
         file close `gcfh'
@@ -1010,15 +1017,20 @@ program define splink, rclass
 
         * Create blocking on the label column for true-match pairs
         * Use label as blocking var — all same-label records are potential matches
-        tempvar label_block
+        tempvar label_block mlabel_gen
         quietly tostring `mlabel', gen(`label_block') force
+        quietly gen double `mlabel_gen' = .
+
+        * Set id_part for mlabel pass (same logic as main pass)
+        local mlabel_id_part ""
+        if "`id'" != "" local mlabel_id_part "`id'"
 
         if `has_link' & `link_type_code' > 0 {
-            plugin call splink_plugin `label_block' `compvars' `linkvar' `id_part' `generate', ///
+            plugin call splink_plugin `label_block' `compvars' `linkvar' `mlabel_id_part' `mlabel_gen', ///
                 "`gamma_config'" "`gamma_diag'"
         }
         else {
-            plugin call splink_plugin `label_block' `compvars' `id_part' `generate', ///
+            plugin call splink_plugin `label_block' `compvars' `mlabel_id_part' `mlabel_gen', ///
                 "`gamma_config'" "`gamma_diag'"
         }
         restore
@@ -1039,6 +1051,10 @@ program define splink, rclass
             * Count levels for this comparison
             quietly summarize gamma_`k'
             local max_level = r(max)
+            if missing(`max_level') {
+                * All gamma values missing for this comparison — skip
+                continue
+            }
             local n_levels = `max_level' + 1
 
             * Tabulate to get proportions (m-probs)

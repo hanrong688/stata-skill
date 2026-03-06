@@ -7,7 +7,7 @@
     "entity_id"
   ],
   "sql_dialect": "duckdb",
-  "linker_uid": "bl11wlh6",
+  "linker_uid": "rjs5wm73",
   "em_convergence": 0.0001,
   "max_iterations": 25,
   "bayes_factor_column_prefix": "bf_",
@@ -75,7 +75,7 @@
         {
           "sql_condition": "ELSE",
           "label_for_charts": "All other comparisons",
-          "m_probability": 2.331280352721586e-130,
+          "m_probability": 2.33128035272159e-130,
           "u_probability": 0.951530612244898,
           "fix_m_probability": false,
           "fix_u_probability": false
@@ -164,7 +164,7 @@
         {
           "sql_condition": "ELSE",
           "label_for_charts": "All other comparisons",
-          "m_probability": 2.9133208802015915e-130,
+          "m_probability": 2.9133208802015963e-130,
           "u_probability": 0.9151515151515152,
           "fix_m_probability": false,
           "fix_u_probability": false

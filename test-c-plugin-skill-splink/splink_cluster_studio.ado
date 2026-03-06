@@ -1,4 +1,4 @@
-*! version 4.1.0  28feb2026
+*! version 4.2.0  06mar2026
 *! Interactive cluster visualization via HTML/D3.js
 *! Opens a force-directed graph of a single cluster in the system browser
 
@@ -9,7 +9,7 @@ program define splink_cluster_studio
         OUTFile(string)]
 
     preserve
-    quietly import delimited `using', clear
+    quietly import delimited `"`using'"', clear
 
     capture confirm variable match_probability
     if _rc {
@@ -19,7 +19,9 @@ program define splink_cluster_studio
     }
     capture confirm variable match_weight
     if _rc {
-        quietly gen double match_weight = ln(match_probability / (1 - match_probability)) / ln(2)
+        quietly gen double match_weight = cond(match_probability >= 1, 20, ///
+            cond(match_probability <= 0, -20, ///
+            ln(match_probability / (1 - match_probability)) / ln(2)))
     }
 
     capture confirm variable `clustervar'
@@ -113,11 +115,12 @@ program define splink_cluster_studio
             local edges_json `"`edges_json'{"source":`src',"target":`tgt',"prob":`:display %6.4f `prob'',"weight":`:display %6.2f `wt''}"'
         }
 
-        * Build nodes JSON
+        * Build nodes JSON (escape quotes in node IDs for valid JSON)
         local nodes_json ""
         forvalues j = 1/`n_nodes' {
             if `j' > 1 local nodes_json `"`nodes_json',"'
-            local nodes_json `"`nodes_json'{"id":"`_node_`j''","label":"`_node_`j''"}"'
+            local _safe_node : subinstr local _node_`j' `"""' `"\""' , all
+            local nodes_json `"`nodes_json'{"id":"`_safe_node'","label":"`_safe_node'"}"'
         }
     }
 

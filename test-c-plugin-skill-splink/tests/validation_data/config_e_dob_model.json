@@ -7,7 +7,7 @@
     "entity_id"
   ],
   "sql_dialect": "duckdb",
-  "linker_uid": "vg5nok5x",
+  "linker_uid": "tlm15ii2",
   "em_convergence": 0.0001,
   "max_iterations": 25,
   "bayes_factor_column_prefix": "bf_",
@@ -35,7 +35,7 @@
         {
           "sql_condition": "\"first_name_l\" = \"first_name_r\"",
           "label_for_charts": "Exact match on first_name",
-          "m_probability": 0.5727768543578513,
+          "m_probability": 0.5727766773771792,
           "u_probability": 0.02806122448979592,
           "fix_m_probability": false,
           "fix_u_probability": false
@@ -43,7 +43,7 @@
         {
           "sql_condition": "jaro_winkler_similarity(\"first_name_l\", \"first_name_r\") >= 0.92",
           "label_for_charts": "Jaro-Winkler distance of first_name >= 0.92",
-          "m_probability": 0.2824737339707834,
+          "m_probability": 0.28247383742659615,
           "u_probability": 0.01445578231292517,
           "fix_m_probability": false,
           "fix_u_probability": false
@@ -51,7 +51,7 @@
         {
           "sql_condition": "jaro_winkler_similarity(\"first_name_l\", \"first_name_r\") >= 0.8",
           "label_for_charts": "Jaro-Winkler distance of first_name >= 0.8",
-          "m_probability": 0.14474941167136535,
+          "m_probability": 0.14474948519622463,
           "u_probability": 0.005952380952380952,
           "fix_m_probability": false,
           "fix_u_probability": false
@@ -59,7 +59,7 @@
         {
           "sql_condition": "ELSE",
           "label_for_charts": "All other comparisons",
-          "m_probability": 1.4880489379554263e-120,
+          "m_probability": 9.220053066704207e-119,
           "u_probability": 0.951530612244898,
           "fix_m_probability": false,
           "fix_u_probability": false
@@ -80,7 +80,7 @@
         {
           "sql_condition": "\"last_name_l\" = \"last_name_r\"",
           "label_for_charts": "Exact match on last_name",
-          "m_probability": 0.5242423500405318,
+          "m_probability": 0.5242423504301131,
           "u_probability": 0.026938775510204082,
           "fix_m_probability": false,
           "fix_u_probability": false
@@ -88,7 +88,7 @@
         {
           "sql_condition": "jaro_winkler_similarity(\"last_name_l\", \"last_name_r\") >= 0.92",
           "label_for_charts": "Jaro-Winkler distance of last_name >= 0.92",
-          "m_probability": 0.22272730298417578,
+          "m_probability": 0.22272730293990056,
           "u_probability": 0.011428571428571429,
           "fix_m_probability": false,
           "fix_u_probability": false
@@ -96,7 +96,7 @@
         {
           "sql_condition": "jaro_winkler_similarity(\"last_name_l\", \"last_name_r\") >= 0.8",
           "label_for_charts": "Jaro-Winkler distance of last_name >= 0.8",
-          "m_probability": 0.24469701364195923,
+          "m_probability": 0.24469701329665303,
           "u_probability": 0.013061224489795919,
           "fix_m_probability": false,
           "fix_u_probability": false
@@ -116,45 +116,60 @@
       "output_column_name": "dob",
       "comparison_levels": [
         {
-          "sql_condition": "\"dob_l\" IS NULL OR \"dob_r\" IS NULL",
-          "label_for_charts": "dob is NULL",
+          "sql_condition": "try_strptime(\"dob_l\", '%Y-%m-%d') IS NULL OR try_strptime(\"dob_r\", '%Y-%m-%d') IS NULL",
+          "label_for_charts": "transformed dob is NULL",
           "fix_m_probability": false,
           "fix_u_probability": false,
           "is_null_level": true
         },
         {
           "sql_condition": "\"dob_l\" = \"dob_r\"",
-          "label_for_charts": "Exact match on dob",
-          "m_probability": 0.6666666912637454,
+          "label_for_charts": "Exact match on date of birth",
+          "m_probability": 0.666666688950979,
           "u_probability": 0.025510204081632654,
           "fix_m_probability": false,
           "fix_u_probability": false
         },
         {
-          "sql_condition": "jaro_winkler_similarity(\"dob_l\", \"dob_r\") >= 0.92",
-          "label_for_charts": "Jaro-Winkler distance of dob >= 0.92",
-          "m_probability": 0.3333333087362546,
-          "u_probability": 0.02295918367346939,
+          "sql_condition": "damerau_levenshtein(\"dob_l\", \"dob_r\") <= 1",
+          "label_for_charts": "DamerauLevenshtein distance <= 1",
+          "m_probability": 0.333333311049021,
+          "u_probability": 0.022108843537414966,
           "fix_m_probability": false,
           "fix_u_probability": false
         },
         {
-          "sql_condition": "jaro_winkler_similarity(\"dob_l\", \"dob_r\") >= 0.8",
-          "label_for_charts": "Jaro-Winkler distance of dob >= 0.8",
-          "m_probability": 1.5392422650547727e-120,
-          "u_probability": 0.4362244897959184,
+          "sql_condition": "ABS(EPOCH(try_strptime(\"dob_l\", '%Y-%m-%d')) - EPOCH(try_strptime(\"dob_r\", '%Y-%m-%d'))) <= 2629800.0",
+          "label_for_charts": "Abs date difference <= 1 month",
+          "m_probability": 0.017543859649122806,
+          "u_probability": 0.0008503401360544217,
+          "fix_m_probability": false,
+          "fix_u_probability": false
+        },
+        {
+          "sql_condition": "ABS(EPOCH(try_strptime(\"dob_l\", '%Y-%m-%d')) - EPOCH(try_strptime(\"dob_r\", '%Y-%m-%d'))) <= 31557600.0",
+          "label_for_charts": "Abs date difference <= 1 year",
+          "u_probability": 0.04081632653061224,
+          "fix_m_probability": false,
+          "fix_u_probability": false
+        },
+        {
+          "sql_condition": "ABS(EPOCH(try_strptime(\"dob_l\", '%Y-%m-%d')) - EPOCH(try_strptime(\"dob_r\", '%Y-%m-%d'))) <= 315576000.0",
+          "label_for_charts": "Abs date difference <= 10 year",
+          "u_probability": 0.6173469387755102,
           "fix_m_probability": false,
           "fix_u_probability": false
         },
         {
           "sql_condition": "ELSE",
           "label_for_charts": "All other comparisons",
-          "u_probability": 0.5153061224489796,
+          "m_probability": 9.537250060691001e-119,
+          "u_probability": 0.29336734693877553,
           "fix_m_probability": false,
           "fix_u_probability": false
         }
       ],
-      "comparison_description": "JaroWinklerAtThresholds"
+      "comparison_description": "DateOfBirthComparison"
     }
   ]
 }

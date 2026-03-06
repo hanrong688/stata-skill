@@ -436,13 +436,13 @@ def config_d_term_freq(df, output_dir):
 
 
 def config_e_dob(df, output_dir):
-    """Config E: DOB as a comparison variable with date thresholds."""
+    """Config E: DOB domain comparison (DateOfBirthComparison)."""
     settings = SettingsCreator(
         link_type="dedupe_only",
         comparisons=[
             cl.JaroWinklerAtThresholds("first_name", [0.92, 0.80]),
             cl.JaroWinklerAtThresholds("last_name", [0.92, 0.80]),
-            cl.JaroWinklerAtThresholds("dob", [0.92, 0.80]),
+            cl.DateOfBirthComparison("dob", input_is_string=True),
         ],
         blocking_rules_to_generate_predictions=[
             block_on("city"),

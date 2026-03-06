@@ -1,4 +1,4 @@
-*! version 4.1.0  28feb2026
+*! version 4.2.0  06mar2026
 *! Compare two observations using a trained splink model
 *! Shows per-field gamma, Bayes factor, and overall match weight
 
@@ -186,13 +186,16 @@ program define splink_compare, rclass
         * Get values from both observations
         local val_l = ""
         local val_r = ""
+        local var_found = 1
+        local is_string_var = 0
         capture confirm variable `vname'
         if _rc == 0 {
             capture confirm string variable `vname'
-            if _rc == 0 {
-                * String variable
-                local val_l = `vname'[`obs1']
-                local val_r = `vname'[`obs2']
+            local is_string_var = (_rc == 0)
+            if `is_string_var' {
+                * String variable (compound quotes for safety)
+                local val_l `"`=`vname'[`obs1']'"'
+                local val_r `"`=`vname'[`obs2']'"'
             }
             else {
                 * Numeric variable
@@ -203,6 +206,7 @@ program define splink_compare, rclass
         else {
             local val_l = "(not found)"
             local val_r = "(not found)"
+            local var_found = 0
         }
 
         * Determine gamma level
@@ -211,8 +215,11 @@ program define splink_compare, rclass
         local gamma = 0
         local is_null = 0
 
-        * Check for missing values (type already checked above)
-        if _rc == 0 {
+        if !`var_found' {
+            * Variable not in dataset — treat as null (neutral BF)
+            local is_null = 1
+        }
+        else if `is_string_var' {
             * String: missing if empty
             if `"`val_l'"' == "" | `"`val_r'"' == "" {
                 local is_null = 1

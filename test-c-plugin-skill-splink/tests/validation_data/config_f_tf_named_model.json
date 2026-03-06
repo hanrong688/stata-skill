@@ -7,7 +7,7 @@
     "entity_id"
   ],
   "sql_dialect": "duckdb",
-  "linker_uid": "enxkthqq",
+  "linker_uid": "2gq6uhmh",
   "em_convergence": 0.0001,
   "max_iterations": 25,
   "bayes_factor_column_prefix": "bf_",
@@ -61,7 +61,7 @@
         {
           "sql_condition": "ELSE",
           "label_for_charts": "All other comparisons",
-          "m_probability": 4.7652994191112225e-121,
+          "m_probability": 4.765299419111226e-121,
           "u_probability": 0.951530612244898,
           "fix_m_probability": false,
           "fix_u_probability": false
@@ -145,7 +145,7 @@
         {
           "sql_condition": "jaro_winkler_similarity(\"dob_l\", \"dob_r\") >= 0.8",
           "label_for_charts": "Jaro-Winkler distance of dob >= 0.8",
-          "m_probability": 4.927764561198864e-121,
+          "m_probability": 4.927764561198867e-121,
           "u_probability": 0.4362244897959184,
           "fix_m_probability": false,
           "fix_u_probability": false

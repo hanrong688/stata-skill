@@ -124,7 +124,7 @@ Sorted by:
 . tempfile input_data
 
 . save `input_data'
-file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St41526.000001 saved
+file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St59210.000001 saved
     as .dta format
 
 . 
@@ -159,10 +159,10 @@ CONFIG A: JW default, city blocking
 >     prior(0.05) threshold(0.5) ///
 >     uestimate umaxpairs(100000) useed(42) ///
 >     id(unique_id) savepairs("`pairs_a'") verbose replace
-(file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St41526.000003 not
+(file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St59210.000003 not
     found)
-Config file written to: /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St415
-> 26.000003
+Config file written to: /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St592
+> 10.000003
 splink: n=50 n_comp=4 n_block_rules=1 link_type=0 threshold=0.500 prior=0.05000
 > 0
 splink: 392 unique candidate pairs from 1 blocking rule(s)
@@ -180,7 +180,7 @@ splink: running EM estimation...
   EM iteration 5: max_change=0.000001 lambda=0.152962
 splink: EM converged in 5 iterations, lambda=0.152962
 splink: pairwise output saved to /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn
-> /T//St41526.000002
+> /T//St59210.000002
 splink: 60 matches, 15 clusters
 
 ------------------------------------------------------------
@@ -209,7 +209,7 @@ splink: 60 matches, 15 clusters
 . tempfile py_clusters_a
 
 . save `py_clusters_a'
-file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St41526.000004 saved
+file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St59210.000004 saved
     as .dta format
 
 . restore
@@ -350,7 +350,7 @@ file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St41526.000004 saved
 . tempfile stata_pairs
 
 . save `stata_pairs'
-file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St41526.000006 saved
+file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St59210.000006 saved
     as .dta format
 
 . import delimited "`val_dir'/config_a_jw_city_predictions.csv", clear
@@ -400,6 +400,108 @@ file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St41526.000006 saved
 . restore
 
 . 
+. * Gamma-level cross-validation: compare per-pair gamma vectors
+. * Load Python gamma predictions and merge with Stata pairs
+. preserve
+
+. import delimited "`val_dir'/config_a_jw_city_gamma_predictions.csv", clear
+(encoding automatically selected: ISO-8859-2)
+(12 vars, 60 obs)
+
+. rename gamma_first_name py_gamma_fn
+
+. rename gamma_last_name py_gamma_ln
+
+. rename gamma_dob py_gamma_dob
+
+. rename gamma_email py_gamma_email
+
+. keep unique_id_l unique_id_r py_gamma_fn py_gamma_ln py_gamma_dob py_gamma_em
+> ail
+
+. tempfile py_gammas
+
+. save `py_gammas'
+file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St59210.000008 saved
+    as .dta format
+
+. 
+. * Load Stata pairs
+. import delimited "`pairs_a'", clear
+(encoding automatically selected: ISO-8859-2)
+(13 vars, 392 obs)
+
+. rename gamma_first_name st_gamma_fn
+
+. rename gamma_last_name st_gamma_ln
+
+. rename gamma_dob st_gamma_dob
+
+. rename gamma_email st_gamma_email
+
+. keep unique_id_l unique_id_r st_gamma_fn st_gamma_ln st_gamma_dob st_gamma_em
+> ail
+
+. 
+. * Merge on common pairs
+. merge 1:1 unique_id_l unique_id_r using `py_gammas', keep(3) nogenerate
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                             0
+    Matched                                60  
+    -----------------------------------------
+
+. local n_common = _N
+
+. display as text "  Common pairs for gamma comparison: `n_common'"
+  Common pairs for gamma comparison: 60
+
+. 
+. if `n_common' >= 5 {
+.     * Check gamma agreement rate for each variable
+.     gen byte fn_agree = (st_gamma_fn == py_gamma_fn)
+.     gen byte ln_agree = (st_gamma_ln == py_gamma_ln)
+.     gen byte dob_agree = (st_gamma_dob == py_gamma_dob)
+.     gen byte email_agree = (st_gamma_email == py_gamma_email)
+. 
+.     summarize fn_agree, meanonly
+.     local fn_rate = r(mean)
+.     summarize ln_agree, meanonly
+.     local ln_rate = r(mean)
+.     summarize dob_agree, meanonly
+.     local dob_rate = r(mean)
+.     summarize email_agree, meanonly
+.     local email_rate = r(mean)
+. 
+.     local avg_agree = (`fn_rate' + `ln_rate' + `dob_rate' + `email_rate') / 4
+.     display as text "  Gamma agreement: fn=`=string(`fn_rate',"%5.3f")' ln=`=
+> string(`ln_rate',"%5.3f")' dob=`=string(`dob_rate',"%5.3f")' email=`=string(`
+> email_rate',"%5.3f")'"
+  Gamma agreement: fn=1.000 ln=1.000 dob=1.000 email=1.000
+.     display as text "  Average gamma agreement: `=string(`avg_agree',"%5.3f")
+> '"
+  Average gamma agreement: 1.000
+. 
+.     if `avg_agree' > 0.7 {
+.         _vtest_pass "Config A: average gamma agreement > 0.70 (`=string(`avg_
+> agree',"%5.3f")')"
+  PASS: Config A: average gamma agreement > 0.70 (1.000)
+.     }
+.     else {
+.         _vtest_fail "Config A: average gamma agreement = `=string(`avg_agree'
+> ,"%5.3f")' (< 0.70)"
+.     }
+. }
+
+. else {
+.     _vtest_pass "Config A: too few common pairs for gamma comparison (`n_comm
+> on')"
+. }
+
+. restore
+
+. 
 . * Model round-trip: savemodel -> loadmodel -> re-score should produce same we
 > ights
 . tempfile model_a
@@ -411,12 +513,12 @@ file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St41526.000006 saved
 >     prior(0.05) threshold(0.5) ///
 >     uestimate umaxpairs(100000) useed(42) ///
 >     savemodel("`model_a'") replace
-(file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St41526.000008 not
+(file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St59210.00000a not
     found)
-(file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St41526.000007 not
+(file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St59210.000009 not
     found)
-Model saved to: /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St41526.00000
-> 7
+Model saved to: /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St59210.00000
+> 9
 
 ------------------------------------------------------------
   Splink: Probabilistic Record Linkage
@@ -434,9 +536,9 @@ Model saved to: /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St41526.00000
 . splink first_name last_name dob email, ///
 >     block(city) gen(cid_rt2) ///
 >     prior(0.05) threshold(0.5) loadmodel("`model_a'") replace
-Model loaded from: /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St41526.00
-> 0007 (lambda=.15296158, 4 comparisons)
-(file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St41526.000008 not
+Model loaded from: /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St59210.00
+> 0009 (lambda=.15296158, 4 comparisons)
+(file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St59210.00000a not
     found)
 
 ------------------------------------------------------------
@@ -483,34 +585,35 @@ CONFIG B: Mixed methods, city blocking
 . use `input_data', clear
 
 . 
-. * Python used: JW for first_name/last_name, Levenshtein for dob, JW for email
+. * Python used: JW for first_name, Levenshtein for last_name, JW for dob, JW f
+> or email
 . splink first_name last_name dob email, ///
 >     block(city) gen(stata_cid) ///
->     compmethod(jw jw lev jw) ///
->     complevels("0.92,0.80|0.92,0.80|1,2|0.92,0.80") ///
+>     compmethod(jw lev jw jw) ///
+>     complevels("0.92,0.80|1,2|0.92,0.80|0.92,0.80") ///
 >     prior(0.05) threshold(0.5) ///
 >     uestimate umaxpairs(100000) useed(42) ///
 >     verbose replace
-(file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St41526.000008 not
+(file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St59210.00000a not
     found)
-Config file written to: /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St415
-> 26.000008
+Config file written to: /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St592
+> 10.00000a
 splink: n=50 n_comp=4 n_block_rules=1 link_type=0 threshold=0.500 prior=0.05000
 > 0
 splink: 392 unique candidate pairs from 1 blocking rule(s)
 splink: estimated u from 100000 random pairs (seed=42)
   field 0 u: 0.9131 0.0054 0.0141 0.0273
-  field 1 u: 0.9482 0.0132 0.0120 0.0266
-  field 2 u: 0.9054 0.0086 0.0211 0.0247
+  field 1 u: 0.9570 0.0053 0.0112 0.0266
+  field 2 u: 0.5359 0.3771 0.0220 0.0247
   field 3 u: 0.7486 0.0215 0.0078 0.0321
 splink: u fixed from 100000 random pairs; EM will only estimate m
 splink: running EM estimation...
-  EM iteration 1: max_change=0.393265 lambda=0.148729
-  EM iteration 2: max_change=0.015232 lambda=0.152828
-  EM iteration 3: max_change=0.000681 lambda=0.152941
-  EM iteration 4: max_change=0.000021 lambda=0.152944
-  EM iteration 5: max_change=0.000001 lambda=0.152944
-splink: EM converged in 5 iterations, lambda=0.152944
+  EM iteration 1: max_change=0.389430 lambda=0.142557
+  EM iteration 2: max_change=0.043248 lambda=0.152381
+  EM iteration 3: max_change=0.001267 lambda=0.152610
+  EM iteration 4: max_change=0.000028 lambda=0.152615
+  EM iteration 5: max_change=0.000001 lambda=0.152615
+splink: EM converged in 5 iterations, lambda=0.152615
 splink: 60 matches, 15 clusters
 
 ------------------------------------------------------------
@@ -538,7 +641,7 @@ splink: 60 matches, 15 clusters
 . tempfile py_clusters_b
 
 . save `py_clusters_b'
-file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St41526.000009 saved
+file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St59210.00000b saved
     as .dta format
 
 . restore
@@ -605,10 +708,10 @@ CONFIG C: Multi-block (city + first_name)
 >     prior(0.05) threshold(0.5) ///
 >     uestimate umaxpairs(100000) useed(42) ///
 >     verbose replace
-(file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St41526.00000a not
+(file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St59210.00000c not
     found)
-Config file written to: /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St415
-> 26.00000a
+Config file written to: /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St592
+> 10.00000c
 splink: n=49 n_comp=3 n_block_rules=2 link_type=0 threshold=0.500 prior=0.05000
 > 0
 splink: 376 unique candidate pairs from 2 blocking rule(s)
@@ -659,7 +762,7 @@ splink: 56 matches, 15 clusters
 . tempfile py_clusters_c
 
 . save `py_clusters_c'
-file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St41526.00000b saved
+file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St59210.00000d saved
     as .dta format
 
 . restore
@@ -725,10 +828,10 @@ CONFIG D: TF adjustment on last_name
 >     tfadjust(last_name) tfmin(0.001) ///
 >     uestimate umaxpairs(100000) useed(42) ///
 >     verbose replace
-(file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St41526.00000e not
+(file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St59210.00000g not
     found)
-Config file written to: /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St415
-> 26.00000e
+Config file written to: /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St592
+> 10.00000g
 splink: n=50 n_comp=4 n_block_rules=1 link_type=0 threshold=0.500 prior=0.05000
 > 0
   Loaded TF table for field 1: 28 entries
@@ -773,7 +876,7 @@ splink: 60 matches, 15 clusters
 . tempfile py_clusters_d
 
 . save `py_clusters_d'
-file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St41526.00000d saved
+file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St59210.00000f saved
     as .dta format
 
 . restore
@@ -831,52 +934,54 @@ CONFIG E: DOB comparison, city blocking
 . use `input_data', clear
 
 . 
+. * Python used: JW for first_name, JW for last_name, DateOfBirthComparison for
+>  dob
 . splink first_name last_name dob, ///
 >     block(city) gen(stata_cid) ///
->     compmethod(jw jw jw) ///
->     complevels("0.92,0.80|0.92,0.80|0.92,0.80") ///
+>     compmethod(jw jw dob) ///
+>     complevels("0.92,0.80|0.92,0.80|") ///
 >     prior(0.05) threshold(0.5) ///
 >     uestimate umaxpairs(100000) useed(42) ///
 >     verbose replace
-(file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St41526.00000e not
+(file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St59210.00000g not
     found)
-Config file written to: /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St415
-> 26.00000e
+Config file written to: /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St592
+> 10.00000g
 splink: n=50 n_comp=3 n_block_rules=1 link_type=0 threshold=0.500 prior=0.05000
 > 0
 splink: 392 unique candidate pairs from 1 blocking rule(s)
 splink: estimated u from 100000 random pairs (seed=42)
   field 0 u: 0.9131 0.0054 0.0141 0.0273
   field 1 u: 0.9482 0.0132 0.0120 0.0266
-  field 2 u: 0.5359 0.3771 0.0220 0.0247
+  field 2 u: 0.9131 0.0138 0.0082 0.0247
 splink: u fixed from 100000 random pairs; EM will only estimate m
 splink: running EM estimation...
-  EM iteration 1: max_change=0.369479 lambda=0.138771
-  EM iteration 2: max_change=0.045095 lambda=0.150297
-  EM iteration 3: max_change=0.000208 lambda=0.150342
-  EM iteration 4: max_change=0.000216 lambda=0.150374
-  EM iteration 5: max_change=0.000258 lambda=0.150413
-  EM iteration 6: max_change=0.000297 lambda=0.150458
-  EM iteration 7: max_change=0.000331 lambda=0.150508
-  EM iteration 8: max_change=0.000352 lambda=0.150561
-  EM iteration 9: max_change=0.000358 lambda=0.150615
-  EM iteration 10: max_change=0.000348 lambda=0.150667
-  EM iteration 11: max_change=0.000323 lambda=0.150716
-  EM iteration 12: max_change=0.000287 lambda=0.150760
-  EM iteration 13: max_change=0.000246 lambda=0.150797
-  EM iteration 14: max_change=0.000205 lambda=0.150828
-  EM iteration 15: max_change=0.000165 lambda=0.150853
-  EM iteration 16: max_change=0.000131 lambda=0.150873
-  EM iteration 17: max_change=0.000102 lambda=0.150888
-  EM iteration 18: max_change=0.000078 lambda=0.150900
-  EM iteration 19: max_change=0.000059 lambda=0.150909
-  EM iteration 20: max_change=0.000045 lambda=0.150916
-  EM iteration 21: max_change=0.000033 lambda=0.150921
-  EM iteration 22: max_change=0.000025 lambda=0.150924
-  EM iteration 23: max_change=0.000018 lambda=0.150927
-  EM iteration 24: max_change=0.000014 lambda=0.150929
-  EM iteration 25: max_change=0.000010 lambda=0.150931
-splink: EM converged in 25 iterations, lambda=0.150931
+  EM iteration 1: max_change=0.287105 lambda=0.142839
+  EM iteration 2: max_change=0.027829 lambda=0.150389
+  EM iteration 3: max_change=0.000192 lambda=0.150429
+  EM iteration 4: max_change=0.000206 lambda=0.150460
+  EM iteration 5: max_change=0.000216 lambda=0.150493
+  EM iteration 6: max_change=0.000221 lambda=0.150526
+  EM iteration 7: max_change=0.000220 lambda=0.150559
+  EM iteration 8: max_change=0.000213 lambda=0.150591
+  EM iteration 9: max_change=0.000202 lambda=0.150622
+  EM iteration 10: max_change=0.000187 lambda=0.150650
+  EM iteration 11: max_change=0.000169 lambda=0.150675
+  EM iteration 12: max_change=0.000150 lambda=0.150698
+  EM iteration 13: max_change=0.000130 lambda=0.150718
+  EM iteration 14: max_change=0.000112 lambda=0.150734
+  EM iteration 15: max_change=0.000094 lambda=0.150749
+  EM iteration 16: max_change=0.000079 lambda=0.150761
+  EM iteration 17: max_change=0.000065 lambda=0.150771
+  EM iteration 18: max_change=0.000054 lambda=0.150779
+  EM iteration 19: max_change=0.000044 lambda=0.150785
+  EM iteration 20: max_change=0.000036 lambda=0.150791
+  EM iteration 21: max_change=0.000029 lambda=0.150795
+  EM iteration 22: max_change=0.000023 lambda=0.150799
+  EM iteration 23: max_change=0.000019 lambda=0.150801
+  EM iteration 24: max_change=0.000015 lambda=0.150804
+  EM iteration 25: max_change=0.000012 lambda=0.150806
+splink: EM converged in 25 iterations, lambda=0.150806
 splink: 59 matches, 15 clusters
 
 ------------------------------------------------------------
@@ -904,7 +1009,7 @@ splink: 59 matches, 15 clusters
 . tempfile py_clusters_e
 
 . save `py_clusters_e'
-file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St41526.00000f saved
+file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St59210.00000h saved
     as .dta format
 
 . restore
@@ -972,10 +1077,10 @@ CONFIG F: TF with named columns
 >     tfadjust(first_name last_name) tfmin(0.001) ///
 >     uestimate umaxpairs(100000) useed(42) ///
 >     savepairs("`pairs_f'") verbose replace
-(file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St41526.00000l not
+(file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St59210.00000n not
     found)
-Config file written to: /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St415
-> 26.00000l
+Config file written to: /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St592
+> 10.00000n
 splink: n=50 n_comp=3 n_block_rules=1 link_type=0 threshold=0.500 prior=0.05000
 > 0
   Loaded TF table for field 0: 27 entries
@@ -994,7 +1099,7 @@ splink: running EM estimation...
   EM iteration 5: max_change=0.000008 lambda=0.148646
 splink: EM converged in 5 iterations, lambda=0.148646
 splink: pairwise output saved to /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn
-> /T//St41526.00000g
+> /T//St59210.00000i
 splink: 59 matches, 15 clusters
 
 ------------------------------------------------------------
@@ -1022,7 +1127,7 @@ splink: 59 matches, 15 clusters
 . tempfile py_clusters_f
 
 . save `py_clusters_f'
-file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St41526.00000i saved
+file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St59210.00000k saved
     as .dta format
 
 . restore
@@ -1123,10 +1228,10 @@ CONFIG G: Multi-blocking (5 rules)
 >     prior(0.05) threshold(0.5) ///
 >     uestimate umaxpairs(100000) useed(42) ///
 >     verbose replace
-(file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St41526.00000k not
+(file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St59210.00000m not
     found)
-Config file written to: /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St415
-> 26.00000k
+Config file written to: /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St592
+> 10.00000m
 splink: n=43 n_comp=3 n_block_rules=5 link_type=0 threshold=0.500 prior=0.05000
 > 0
 splink: 288 unique candidate pairs from 5 blocking rule(s)
@@ -1178,7 +1283,7 @@ splink: 41 matches, 15 clusters
 . tempfile py_clusters_g
 
 . save `py_clusters_g'
-file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St41526.00000l saved
+file /var/folders/s6/4j7qcf_s0yz1c9mdpc8vkjzw0000gn/T//St59210.00000n saved
     as .dta format
 
 . restore
@@ -1233,7 +1338,7 @@ CROSS-VALIDATION SUMMARY
 ------------------------------------------------------------
 
 . display as text "  Passed: " as result ${splink_val_pass}
-  Passed: 13
+  Passed: 14
 
 . display as text "  Failed: " as error ${splink_val_fail}
   Failed: 0

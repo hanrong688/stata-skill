@@ -34,6 +34,8 @@
 #include <math.h>
 #include <stdint.h>
 #include <ctype.h>
+#include <stdarg.h>
+#include <limits.h>
 
 #include "stplugin.h"
 
@@ -51,6 +53,12 @@
 #define TF_HASH_SIZE       8192  /* term frequency hash table buckets */
 #define MAX_INPUT_VARS     4     /* max input vars per multi-column comparison */
 #define MAX_VAR_NAME       64    /* max variable name length */
+#define EM_MAX_HISTORY     200   /* max EM iterations to record */
+
+/* Static EM iteration history (single-threaded Stata plugin, safe as static) */
+static int    em_hist_n = 0;
+static double em_hist_lambda[EM_MAX_HISTORY];
+static double em_hist_maxchange[EM_MAX_HISTORY];
 
 /* Comparison methods */
 #define METHOD_JW          0     /* Jaro-Winkler similarity */
@@ -68,8 +76,11 @@
 #define METHOD_NAME       11     /* Name with phonetic check */
 #define METHOD_ABS_DATE   12     /* Absolute date difference */
 #define METHOD_DISTANCE   13     /* Haversine distance (lat/lon) */
-#define METHOD_COSINE     14     /* Cosine similarity */
+#define METHOD_COSINE     14     /* Cosine similarity (string bigrams) */
 #define METHOD_CUSTOM     15     /* User-precomputed gamma */
+#define METHOD_PCT_DIFF   16     /* Percentage difference (numeric) */
+#define METHOD_INTERSECT  17     /* Token intersection size (strings) */
+#define METHOD_ABS_TIME   18     /* Absolute time difference (Stata %tc = ms) */
 
 /* Link types */
 #define LINK_DEDUPE        0
@@ -84,6 +95,7 @@
 #define MODE_LEGACY        0     /* Single command (backward compatible) */
 #define MODE_TRAIN         1     /* Training: estimate u, then EM for m */
 #define MODE_SCORE         2     /* Score using pre-loaded parameters */
+#define MODE_GAMMA         3     /* Gamma-only: output comparison vectors, no EM */
 
 /* ========================================================================
  * Configuration Structure
@@ -108,6 +120,12 @@ typedef struct {
     int    input_var_indices[MAX_INPUT_VARS]; /* indices into allvars array */
     char   var_name[MAX_VAR_NAME];      /* variable name for named output columns */
     int    null_mode;                   /* per-variable null override (-1=use global) */
+    /* V3 extensions — feature parity with Python splink v4 */
+    double tf_weight;                   /* TF blending weight 0-1 (default 1.0 = full TF) */
+    int    tf_exact_only;               /* 1 = apply TF only to exact-match level (Python default) */
+    int    fix_m_mask;                  /* bitmask: bit l set = level l m-prob is fixed (0=use fix_m) */
+    int    fix_u_mask;                  /* bitmask: bit l set = level l u-prob is fixed (0=use fix_u) */
+    double time_unit_divisor;           /* for METHOD_ABS_TIME: ms divisor */
 } CompConfig;
 
 typedef struct {
@@ -131,6 +149,17 @@ typedef struct {
     int        n_allvars;               /* total unique vars (blocking + comparison) */
     char       id_var_name[MAX_VAR_NAME]; /* user ID variable name for output */
     int        has_id_var;              /* 1 if id variable is passed */
+    /* V3 extensions — feature parity with Python splink v4 */
+    double     recall;                  /* recall adjustment for lambda estimation (default 1.0) */
+    int        fix_lambda;              /* 1 = don't update lambda during EM */
+    int        em_without_tf;           /* 1 = skip TF adjustments during EM */
+    double     cluster_threshold;       /* separate threshold for clustering (default = threshold) */
+    int        use_weight_threshold;    /* 1 = threshold on match_weight instead of probability */
+    double     weight_threshold;        /* match_weight threshold (log2 BF) */
+    int        cluster_method;          /* 0=connected-components, 1=best-link */
+    int        salt_partitions;         /* blocking salting: 0=disabled, N>0 = partition count */
+    int        round_robin_em;          /* 1 = EM per blocking rule, then average */
+    double     em_tol;                  /* EM convergence tolerance (default 1e-5) */
 } Config;
 
 /* ========================================================================
@@ -207,15 +236,31 @@ static TFTable *tf_load_file(const char *path) {
     if (!fgets(line, sizeof(line), f)) { fclose(f); tf_free(t); return NULL; }
 
     while (fgets(line, sizeof(line), f)) {
-        /* format: value,frequency */
-        char *comma = strchr(line, ',');
+        /* format: value,frequency (RFC 4180: quoted values may contain commas) */
+        char *p = line;
+        char *comma;
+        if (*p == '"') {
+            /* Quoted field — find closing quote (skip escaped "") */
+            p++;
+            char *end = p;
+            while (*end) {
+                if (*end == '"' && *(end + 1) == '"') { end += 2; continue; }
+                if (*end == '"') break;
+                end++;
+            }
+            /* Extract unquoted value */
+            *end = '\0';
+            comma = strchr(end + 1, ',');
+        } else {
+            comma = strchr(line, ',');
+        }
         if (!comma) continue;
         *comma = '\0';
         double freq = atof(comma + 1);
         /* trim newline */
         char *nl = strchr(comma + 1, '\n');
         if (nl) *nl = '\0';
-        tf_insert(t, line, freq);
+        tf_insert(t, p, freq);
     }
     fclose(f);
     return t;
@@ -243,6 +288,29 @@ static char *str_strip(char *s) {
     char *end = s + strlen(s) - 1;
     while (end > s && isspace((unsigned char)*end)) *end-- = '\0';
     return s;
+}
+
+/* Write a string field to a CSV file with RFC 4180 escaping.
+ * If the field contains comma, double-quote, or newline, wrap in quotes
+ * and double any internal quotes. */
+static void csv_write_field(FILE *f, const char *s) {
+    int needs_quote = 0;
+    for (const char *p = s; *p; p++) {
+        if (*p == ',' || *p == '"' || *p == '\n' || *p == '\r') {
+            needs_quote = 1;
+            break;
+        }
+    }
+    if (!needs_quote) {
+        fputs(s, f);
+    } else {
+        fputc('"', f);
+        for (const char *p = s; *p; p++) {
+            if (*p == '"') fputc('"', f);
+            fputc(*p, f);
+        }
+        fputc('"', f);
+    }
 }
 
 /* ========================================================================
@@ -515,43 +583,481 @@ static double jaccard_similarity(const char *s1, const char *s2) {
     return result;
 }
 
+/* --- Cosine Similarity on character bigrams --- */
+
+static double cosine_similarity(const char *s1, const char *s2) {
+    int len1 = (int)strlen(s1);
+    int len2 = (int)strlen(s2);
+
+    if (len1 == 0 && len2 == 0) return 1.0;
+    if (len1 < 2 || len2 < 2) return (strcmp(s1, s2) == 0) ? 1.0 : 0.0;
+
+    /* Direct-indexed bigram frequency vectors — key IS the index */
+    #define COS_HASH_SIZE 65536
+    static int freq1[COS_HASH_SIZE];
+    static int freq2[COS_HASH_SIZE];
+    memset(freq1, 0, sizeof(freq1));
+    memset(freq2, 0, sizeof(freq2));
+
+    for (int i = 0; i < len1 - 1; i++) {
+        unsigned int h = ((unsigned char)s1[i] << 8) | (unsigned char)s1[i+1];
+        freq1[h]++;
+    }
+    for (int i = 0; i < len2 - 1; i++) {
+        unsigned int h = ((unsigned char)s2[i] << 8) | (unsigned char)s2[i+1];
+        freq2[h]++;
+    }
+
+    /* Compute dot product and magnitudes */
+    double dot = 0.0, mag1 = 0.0, mag2 = 0.0;
+    for (int i = 0; i < COS_HASH_SIZE; i++) {
+        if (freq1[i] || freq2[i]) {
+            dot += (double)freq1[i] * freq2[i];
+            mag1 += (double)freq1[i] * freq1[i];
+            mag2 += (double)freq2[i] * freq2[i];
+        }
+    }
+    #undef COS_HASH_SIZE
+
+    if (mag1 < 1e-10 || mag2 < 1e-10) return 0.0;
+    return dot / (sqrt(mag1) * sqrt(mag2));
+}
+
+/* --- Percentage Difference (numeric) --- */
+
+static double pct_diff(double a, double b) {
+    /* ABS(a-b) / max(|a|, |b|) — handles negative values correctly */
+    double abs_a = fabs(a), abs_b = fabs(b);
+    double max_val = abs_a > abs_b ? abs_a : abs_b;
+    if (max_val < 1e-10) return 0.0; /* both ~zero */
+    return fabs(a - b) / max_val;
+}
+
+/* --- Token Intersection Size --- */
+/* Counts shared space-delimited tokens between two strings */
+
+static int token_intersection_size(const char *s1, const char *s2) {
+    /* Extract tokens from s1 and s2, count matches */
+    #define MAX_TOKENS 128
+    #define MAX_TOK_LEN 128
+    char toks1[MAX_TOKENS][MAX_TOK_LEN];
+    char toks2[MAX_TOKENS][MAX_TOK_LEN];
+    int n1 = 0, n2 = 0;
+
+    /* Tokenize s1 */
+    {
+        char buf[1024];
+        strncpy(buf, s1, 1023); buf[1023] = '\0';
+        char *tok = strtok(buf, " \t");
+        while (tok && n1 < MAX_TOKENS) {
+            strncpy(toks1[n1], tok, MAX_TOK_LEN - 1);
+            toks1[n1][MAX_TOK_LEN - 1] = '\0';
+            n1++;
+            tok = strtok(NULL, " \t");
+        }
+    }
+    /* Tokenize s2 */
+    {
+        char buf[1024];
+        strncpy(buf, s2, 1023); buf[1023] = '\0';
+        char *tok = strtok(buf, " \t");
+        while (tok && n2 < MAX_TOKENS) {
+            strncpy(toks2[n2], tok, MAX_TOK_LEN - 1);
+            toks2[n2][MAX_TOK_LEN - 1] = '\0';
+            n2++;
+            tok = strtok(NULL, " \t");
+        }
+    }
+
+    /* Count intersection */
+    int used[MAX_TOKENS];
+    memset(used, 0, (size_t)n2 * sizeof(int));
+    int count = 0;
+    for (int i = 0; i < n1; i++) {
+        for (int j = 0; j < n2; j++) {
+            if (!used[j] && strcmp(toks1[i], toks2[j]) == 0) {
+                count++;
+                used[j] = 1;
+                break;
+            }
+        }
+    }
+    #undef MAX_TOKENS
+    #undef MAX_TOK_LEN
+    return count;
+}
+
+/* ========================================================================
+ * Double Metaphone Algorithm (Lawrence Philips, 2000)
+ *
+ * Generates primary and secondary phonetic codes for English names.
+ * This is a simplified but functional implementation covering the
+ * major rules needed for name matching.
+ * ======================================================================== */
+
+#define META_MAX_LEN 6  /* max phonetic code length */
+
+static int is_vowel(char c) {
+    return (c == 'A' || c == 'E' || c == 'I' || c == 'O' || c == 'U' || c == 'Y');
+}
+
+
+static void double_metaphone(const char *input, char *primary, char *secondary) {
+    char word[256];
+    int len, pos = 0;
+    int p_idx = 0, s_idx = 0;
+
+    primary[0] = '\0';
+    secondary[0] = '\0';
+
+    if (!input || !input[0]) return;
+
+    /* Uppercase copy */
+    strncpy(word, input, 255);
+    word[255] = '\0';
+    for (int i = 0; word[i]; i++)
+        word[i] = (char)toupper((unsigned char)word[i]);
+    len = (int)strlen(word);
+
+    /* Skip initial silent letters */
+    if (len >= 2) {
+        if ((word[0] == 'G' && word[1] == 'N') ||
+            (word[0] == 'K' && word[1] == 'N') ||
+            (word[0] == 'P' && word[1] == 'N') ||
+            (word[0] == 'A' && word[1] == 'E') ||
+            (word[0] == 'W' && word[1] == 'R'))
+            pos = 1;
+    }
+
+    /* Initial X -> S */
+    if (word[0] == 'X') {
+        primary[p_idx++] = 'S';
+        secondary[s_idx++] = 'S';
+        pos = 1;
+    }
+
+    #define ADD_P(c) do { if (p_idx < META_MAX_LEN) primary[p_idx++] = (c); } while(0)
+    #define ADD_S(c) do { if (s_idx < META_MAX_LEN) secondary[s_idx++] = (c); } while(0)
+    #define ADD_BOTH(c) do { ADD_P(c); ADD_S(c); } while(0)
+
+    while (pos < len && (p_idx < META_MAX_LEN || s_idx < META_MAX_LEN)) {
+        char c = word[pos];
+        char next = (pos + 1 < len) ? word[pos + 1] : '\0';
+        char next2 = (pos + 2 < len) ? word[pos + 2] : '\0';
+
+        switch (c) {
+        case 'A': case 'E': case 'I': case 'O': case 'U':
+            if (pos == 0) ADD_BOTH('A');
+            pos++;
+            break;
+
+        case 'B':
+            ADD_BOTH('P');
+            pos += (next == 'B') ? 2 : 1;
+            break;
+
+        case 'C':
+            if (next == 'H') {
+                ADD_BOTH('X');
+                pos += 2;
+            } else if (next == 'I' || next == 'E' || next == 'Y') {
+                ADD_BOTH('S');
+                pos += 2;
+            } else {
+                ADD_BOTH('K');
+                pos += (next == 'C' && next != 'E' && next != 'I') ? 2 : 1;
+            }
+            break;
+
+        case 'D':
+            if (next == 'G' && (next2 == 'I' || next2 == 'E' || next2 == 'Y')) {
+                ADD_BOTH('J');
+                pos += 3;
+            } else {
+                ADD_BOTH('T');
+                pos += (next == 'D') ? 2 : 1;
+            }
+            break;
+
+        case 'F':
+            ADD_BOTH('F');
+            pos += (next == 'F') ? 2 : 1;
+            break;
+
+        case 'G':
+            if (next == 'H') {
+                if (pos > 0 && !is_vowel(word[pos - 1])) {
+                    ADD_BOTH('K');
+                } else if (pos == 0) {
+                    ADD_BOTH('K');
+                }
+                pos += 2;
+            } else if (next == 'N') {
+                if (pos + 2 >= len || (pos + 2 < len && word[pos + 2] == '\0')) {
+                    /* silent GN at end */
+                } else {
+                    ADD_BOTH('K');
+                }
+                pos += 2;
+            } else if (next == 'G') {
+                ADD_BOTH('K');
+                pos += 2;
+            } else if (next == 'I' || next == 'E' || next == 'Y') {
+                ADD_P('J');
+                ADD_S('K');  /* Germanic: K for secondary */
+                pos += 2;
+            } else {
+                if (pos > 0 || next != '\0') ADD_BOTH('K');
+                pos++;
+            }
+            break;
+
+        case 'H':
+            if (is_vowel(next) && (pos == 0 || !is_vowel(word[pos - 1]))) {
+                ADD_BOTH('H');
+            }
+            pos++;
+            break;
+
+        case 'J':
+            ADD_P('J');
+            ADD_S('H');  /* Spanish J -> H */
+            pos += (next == 'J') ? 2 : 1;
+            break;
+
+        case 'K':
+            ADD_BOTH('K');
+            pos += (next == 'K') ? 2 : 1;
+            break;
+
+        case 'L':
+            ADD_BOTH('L');
+            pos += (next == 'L') ? 2 : 1;
+            break;
+
+        case 'M':
+            ADD_BOTH('M');
+            pos += (next == 'M') ? 2 : 1;
+            break;
+
+        case 'N':
+            ADD_BOTH('N');
+            pos += (next == 'N') ? 2 : 1;
+            break;
+
+        case 'P':
+            if (next == 'H') {
+                ADD_BOTH('F');
+                pos += 2;
+            } else {
+                ADD_BOTH('P');
+                pos += (next == 'P') ? 2 : 1;
+            }
+            break;
+
+        case 'Q':
+            ADD_BOTH('K');
+            pos += (next == 'Q') ? 2 : 1;
+            break;
+
+        case 'R':
+            ADD_BOTH('R');
+            pos += (next == 'R') ? 2 : 1;
+            break;
+
+        case 'S':
+            if (next == 'H') {
+                ADD_BOTH('X');
+                pos += 2;
+            } else if (next == 'I' && (next2 == 'O' || next2 == 'A')) {
+                ADD_P('X');
+                ADD_S('S');
+                pos += 3;
+            } else if (next == 'C') {
+                if (next2 == 'H') {
+                    ADD_P('X');
+                    ADD_S('S');
+                    pos += 3;
+                } else if (next2 == 'I' || next2 == 'E' || next2 == 'Y') {
+                    ADD_BOTH('S');
+                    pos += 3;
+                } else {
+                    ADD_BOTH('S');
+                    ADD_BOTH('K');
+                    pos += 3;
+                }
+            } else {
+                ADD_BOTH('S');
+                pos += (next == 'S' || next == 'Z') ? 2 : 1;
+            }
+            break;
+
+        case 'T':
+            if (next == 'H') {
+                ADD_BOTH('0');  /* theta -> 0 as placeholder */
+                pos += 2;
+            } else if (next == 'I' && (next2 == 'O' || next2 == 'A')) {
+                ADD_BOTH('X');
+                pos += 3;
+            } else {
+                ADD_BOTH('T');
+                pos += (next == 'T') ? 2 : 1;
+            }
+            break;
+
+        case 'V':
+            ADD_BOTH('F');
+            pos += (next == 'V') ? 2 : 1;
+            break;
+
+        case 'W':
+            if (is_vowel(next)) {
+                ADD_BOTH('A');
+            }
+            pos++;
+            break;
+
+        case 'X':
+            ADD_BOTH('K');
+            ADD_BOTH('S');
+            pos += (next == 'X') ? 2 : 1;
+            break;
+
+        case 'Z':
+            ADD_BOTH('S');
+            pos += (next == 'Z') ? 2 : 1;
+            break;
+
+        default:
+            pos++;
+            break;
+        }
+    }
+
+    #undef ADD_P
+    #undef ADD_S
+    #undef ADD_BOTH
+
+    primary[p_idx] = '\0';
+    secondary[s_idx] = '\0';
+}
+
+/*
+ * Check if two names have a phonetic match via Double Metaphone.
+ * Returns 1 if any of the 4 code pairs match (p1==p2, p1==s2, s1==p2, s1==s2).
+ */
+static int metaphone_match(const char *a, const char *b) {
+    char pa[META_MAX_LEN + 1], sa[META_MAX_LEN + 1];
+    char pb[META_MAX_LEN + 1], sb[META_MAX_LEN + 1];
+    double_metaphone(a, pa, sa);
+    double_metaphone(b, pb, sb);
+
+    if (pa[0] && pb[0] && strcmp(pa, pb) == 0) return 1;
+    if (pa[0] && sb[0] && strcmp(pa, sb) == 0) return 1;
+    if (sa[0] && pb[0] && strcmp(sa, pb) == 0) return 1;
+    if (sa[0] && sb[0] && strcmp(sa, sb) == 0) return 1;
+    return 0;
+}
+
+/*
+ * Name comparison with phonetic matching (METHOD_NAME = 11).
+ * Python splink NameComparison levels:
+ *   4 = exact match
+ *   3 = JW ≥ thresh1 (default 0.92)
+ *   2 = JW ≥ thresh2 (default 0.88)
+ *   1 = JW ≥ thresh3 (default 0.70) OR Double Metaphone match
+ *   0 = else
+ * Thresholds configurable via CompConfig.thresholds[]
+ */
+static int compare_name(const char *a, const char *b, const CompConfig *cfg) {
+    double t1 = 0.92, t2 = 0.88, t3 = 0.70;
+    if (cfg && cfg->n_thresholds >= 1) t1 = cfg->thresholds[0];
+    if (cfg && cfg->n_thresholds >= 2) t2 = cfg->thresholds[1];
+    if (cfg && cfg->n_thresholds >= 3) t3 = cfg->thresholds[2];
+
+    if (strcmp(a, b) == 0) return 4; /* exact */
+
+    double jw = jaro_winkler_similarity(a, b);
+    if (jw >= t1) return 3;
+    if (jw >= t2) return 2;
+
+    /* Level 1: JW ≥ t3 OR phonetic match */
+    if (jw >= t3) return 1;
+    if (metaphone_match(a, b)) return 1;
+
+    return 0;
+}
+
 /* ========================================================================
  * Domain-Specific Comparison Functions
  * ======================================================================== */
 
 /*
  * Date of Birth comparison: parse YYYY-MM-DD or YYYYMMDD.
- * Levels (with 3 thresholds, ascending):
- *   0 = else (nothing matches)
- *   1 = year-only match
- *   2 = year+month match
- *   3 = exact match
+ * Python splink v4 DateOfBirthComparison has 6 levels:
+ *   5 = exact match
+ *   4 = Damerau-Levenshtein distance ≤ 1 on raw string
+ *   3 = within 1 month (≤ 31 days)
+ *   2 = within 1 year (≤ 365 days)
+ *   1 = within 10 years (≤ 3650 days)
+ *   0 = else
  * Returns level directly (not using threshold loop).
  */
+
+/* Convert year/month/day to approximate day count for date arithmetic */
+static int date_to_days(int y, int m, int d) {
+    /* Simplified: assumes 30.44 days/month, 365.25 days/year */
+    return (int)(y * 365.25 + (m - 1) * 30.44 + d);
+}
+
 static int compare_dob(const char *a, const char *b) {
     int ya=0, ma=0, da=0, yb=0, mb=0, db=0;
 
     /* Try YYYY-MM-DD */
     if (sscanf(a, "%d-%d-%d", &ya, &ma, &da) < 3) {
-        /* Try YYYYMMDD */
-        if (strlen(a) >= 8) {
+        /* Try YYYYMMDD — validate digits first */
+        if (strlen(a) >= 8 && isdigit((unsigned char)a[0]) && isdigit((unsigned char)a[1]) &&
+            isdigit((unsigned char)a[2]) && isdigit((unsigned char)a[3]) &&
+            isdigit((unsigned char)a[4]) && isdigit((unsigned char)a[5]) &&
+            isdigit((unsigned char)a[6]) && isdigit((unsigned char)a[7])) {
             ya = (a[0]-'0')*1000 + (a[1]-'0')*100 + (a[2]-'0')*10 + (a[3]-'0');
             ma = (a[4]-'0')*10 + (a[5]-'0');
             da = (a[6]-'0')*10 + (a[7]-'0');
         } else return 0;
     }
     if (sscanf(b, "%d-%d-%d", &yb, &mb, &db) < 3) {
-        if (strlen(b) >= 8) {
+        if (strlen(b) >= 8 && isdigit((unsigned char)b[0]) && isdigit((unsigned char)b[1]) &&
+            isdigit((unsigned char)b[2]) && isdigit((unsigned char)b[3]) &&
+            isdigit((unsigned char)b[4]) && isdigit((unsigned char)b[5]) &&
+            isdigit((unsigned char)b[6]) && isdigit((unsigned char)b[7])) {
             yb = (b[0]-'0')*1000 + (b[1]-'0')*100 + (b[2]-'0')*10 + (b[3]-'0');
             mb = (b[4]-'0')*10 + (b[5]-'0');
             db = (b[6]-'0')*10 + (b[7]-'0');
         } else return 0;
     }
 
-    if (ya == yb && ma == mb && da == db) return 3; /* exact */
-    if (ya == yb && ma == mb) return 2;              /* year+month */
-    if (ya == yb) return 1;                          /* year only */
-    return 0;                                        /* else */
+    /* Level 5: exact match */
+    if (ya == yb && ma == mb && da == db) return 5;
+
+    /* Level 4: DL distance ≤ 1 on raw date string */
+    int dl = damerau_levenshtein_distance(a, b);
+    if (dl <= 1) return 4;
+
+    /* Compute day difference for proximity levels */
+    int days_a = date_to_days(ya, ma, da);
+    int days_b = date_to_days(yb, mb, db);
+    int day_diff = abs(days_a - days_b);
+
+    /* Level 3: within 1 month (≤ 31 days) */
+    if (day_diff <= 31) return 3;
+
+    /* Level 2: within 1 year (≤ 365 days) */
+    if (day_diff <= 365) return 2;
+
+    /* Level 1: within 10 years (≤ 3650 days) */
+    if (day_diff <= 3650) return 1;
+
+    return 0; /* else */
 }
 
 /*
@@ -559,29 +1065,35 @@ static int compare_dob(const char *a, const char *b) {
  * Levels: 0=else, 1=domain-only, 2=JW-username(>0.88), 3=username-exact, 4=exact
  */
 static int compare_email(const char *a, const char *b) {
-    if (strcmp(a, b) == 0) return 4; /* exact */
+    /* Python splink v4 EmailComparison levels:
+     *   4 = exact full email
+     *   3 = exact username match (part before @)
+     *   2 = JW >= 0.88 on full email
+     *   1 = JW >= 0.88 on username part
+     *   0 = else */
+    if (strcmp(a, b) == 0) return 4; /* exact full email */
 
     const char *at_a = strchr(a, '@');
     const char *at_b = strchr(b, '@');
     if (!at_a || !at_b) return 0;
 
     /* Extract usernames */
-    char user_a[128], user_b[128], dom_a[128], dom_b[128];
+    char user_a[128], user_b[128];
     int ua_len = (int)(at_a - a);
     int ub_len = (int)(at_b - b);
     if (ua_len > 127) ua_len = 127;
     if (ub_len > 127) ub_len = 127;
     strncpy(user_a, a, (size_t)ua_len); user_a[ua_len] = '\0';
     strncpy(user_b, b, (size_t)ub_len); user_b[ub_len] = '\0';
-    strncpy(dom_a, at_a + 1, 127); dom_a[127] = '\0';
-    strncpy(dom_b, at_b + 1, 127); dom_b[127] = '\0';
 
     if (strcmp(user_a, user_b) == 0) return 3; /* username exact */
 
-    double jw = jaro_winkler_similarity(user_a, user_b);
-    if (jw >= 0.88) return 2; /* JW username */
+    double jw_full = jaro_winkler_similarity(a, b);
+    if (jw_full >= 0.88) return 2; /* JW full email */
 
-    if (strcmp(dom_a, dom_b) == 0) return 1; /* domain only */
+    double jw_user = jaro_winkler_similarity(user_a, user_b);
+    if (jw_user >= 0.88) return 1; /* JW username */
+
     return 0;
 }
 
@@ -620,18 +1132,30 @@ static int compare_postcode(const char *a, const char *b) {
  * Name swap comparison: check both orderings of two name fields.
  * Requires two input values per record: (forename, surname).
  * Called with concatenated "forename\tsurname" strings.
- * Levels: 0=else, 1=JW-fuzzy on swapped, 2=exact-swapped, 3=exact
+ * Python splink v4 ForenameSurnameComparison levels:
+ *   6 = exact match on both forename AND surname (normal order)
+ *   5 = columns reversed (forename_l=surname_r AND surname_l=forename_r)
+ *   4 = JW >= thresh1 on BOTH forename AND surname (AND, not average)
+ *   3 = JW >= thresh2 on BOTH forename AND surname (AND, not average)
+ *   2 = exact match on surname only
+ *   1 = exact match on forename only
+ *   0 = else
+ * Thresholds default to 0.92, 0.88 but configurable via CompConfig.thresholds[]
  */
-static int compare_nameswap(const char *a, const char *b) {
+static int compare_nameswap(const char *a, const char *b, const CompConfig *cfg) {
+    double thresh1 = 0.92, thresh2 = 0.88;
+    if (cfg && cfg->n_thresholds >= 1) thresh1 = cfg->thresholds[0];
+    if (cfg && cfg->n_thresholds >= 2) thresh2 = cfg->thresholds[1];
+
     /* Parse "forename\tsurname" */
     const char *ta = strchr(a, '\t');
     const char *tb = strchr(b, '\t');
     if (!ta || !tb) {
         /* Fallback: single name, use JW */
-        if (strcmp(a, b) == 0) return 3;
+        if (strcmp(a, b) == 0) return 6;
         double jw = jaro_winkler_similarity(a, b);
-        if (jw >= 0.92) return 2;
-        if (jw >= 0.80) return 1;
+        if (jw >= thresh1) return 4;
+        if (jw >= thresh2) return 3;
         return 0;
     }
 
@@ -643,17 +1167,27 @@ static int compare_nameswap(const char *a, const char *b) {
     strncpy(fb, b, (size_t)flb); fb[flb] = '\0';
     strncpy(sb, tb + 1, 127); sb[127] = '\0';
 
-    /* Normal order exact */
-    if (strcmp(fa, fb) == 0 && strcmp(sa, sb) == 0) return 3;
+    /* Level 6: Normal order exact (both forename AND surname) */
+    if (strcmp(fa, fb) == 0 && strcmp(sa, sb) == 0) return 6;
 
-    /* Swapped order exact */
-    if (strcmp(fa, sb) == 0 && strcmp(sa, fb) == 0) return 2;
+    /* Level 5: Columns reversed exact */
+    if (strcmp(fa, sb) == 0 && strcmp(sa, fb) == 0) return 5;
 
-    /* JW on normal and swapped, take best */
-    double jw_normal = (jaro_winkler_similarity(fa, fb) + jaro_winkler_similarity(sa, sb)) / 2.0;
-    double jw_swap = (jaro_winkler_similarity(fa, sb) + jaro_winkler_similarity(sa, fb)) / 2.0;
-    double best_jw = jw_normal > jw_swap ? jw_normal : jw_swap;
-    if (best_jw >= 0.88) return 1;
+    /* JW on forename and surname independently (AND logic, not average) */
+    double jw_fn = jaro_winkler_similarity(fa, fb);
+    double jw_sn = jaro_winkler_similarity(sa, sb);
+
+    /* Level 4: BOTH forename JW >= thresh1 AND surname JW >= thresh1 */
+    if (jw_fn >= thresh1 && jw_sn >= thresh1) return 4;
+
+    /* Level 3: BOTH forename JW >= thresh2 AND surname JW >= thresh2 */
+    if (jw_fn >= thresh2 && jw_sn >= thresh2) return 3;
+
+    /* Level 2: Exact surname only */
+    if (strcmp(sa, sb) == 0) return 2;
+
+    /* Level 1: Exact forename only */
+    if (strcmp(fa, fb) == 0) return 1;
 
     return 0;
 }
@@ -695,6 +1229,17 @@ static double haversine_km(double lat1, double lon1, double lat2, double lon2) {
  * For distance methods: thresholds ascend (1, 2, 5, ...).
  * First threshold met maps to the highest fuzzy level (n_thresholds).
  */
+/* Check if a tab-separated string has any empty component.
+ * Returns 1 if starts with tab, ends with tab, or has consecutive tabs.
+ * Used for multi-column comparison variables. */
+static int has_empty_tab_component(const char *s) {
+    if (s[0] == '\t') return 1;
+    size_t len = strlen(s);
+    if (len > 0 && s[len - 1] == '\t') return 1;
+    if (strstr(s, "\t\t")) return 1;
+    return 0;
+}
+
 static int compute_comparison_level(
     const CompConfig *cfg,
     const char *str_a, const char *str_b,
@@ -714,7 +1259,9 @@ static int compute_comparison_level(
             case METHOD_POSTCODE:
                 return compare_postcode(str_a, str_b);
             case METHOD_NAMESWAP:
-                return compare_nameswap(str_a, str_b);
+                return compare_nameswap(str_a, str_b, cfg);
+            case METHOD_NAME:
+                return compare_name(str_a, str_b, cfg);
             case METHOD_DISTANCE: {
                 /* Parse "lat\tlon" from tab-separated string inputs */
                 double lat1 = 0, lon1 = 0, lat2 = 0, lon2 = 0;
@@ -736,9 +1283,14 @@ static int compute_comparison_level(
                 }
                 return 0; /* else — beyond all thresholds */
             }
-            case METHOD_CUSTOM:
+            case METHOD_CUSTOM: {
                 /* Custom: level is pre-computed, stored as numeric in str form */
-                return atoi(str_a); /* str_a holds the precomputed level */
+                int custom_level = atoi(str_a);
+                int max_level = cfg->n_thresholds + 1; /* n_levels - 1 */
+                if (custom_level < 0) custom_level = 0;
+                if (custom_level > max_level) custom_level = max_level;
+                return custom_level;
+            }
             default:
                 break; /* fall through to standard comparison */
         }
@@ -771,6 +1323,19 @@ static int compute_comparison_level(
             case METHOD_JACCARD:
                 sim = jaccard_similarity(str_a, str_b);
                 break;
+            case METHOD_COSINE:
+                sim = cosine_similarity(str_a, str_b);
+                break;
+            case METHOD_INTERSECT: {
+                /* Token intersection: level = min(intersection_size, n_thresholds+1) */
+                int isz = token_intersection_size(str_a, str_b);
+                /* Check thresholds (descending size) */
+                for (int t = 0; t < cfg->n_thresholds; t++) {
+                    if (isz >= (int)cfg->thresholds[t])
+                        return cfg->n_thresholds - t;
+                }
+                return 0; /* else — below all thresholds */
+            }
             case METHOD_EXACT:
                 /* Not exact (checked above) -> else level */
                 return 0;
@@ -796,12 +1361,41 @@ static int compute_comparison_level(
     }
     else {
         /* Numeric comparison */
+        if (cfg->method == METHOD_CUSTOM) {
+            /* Custom: level is pre-computed, stored as numeric value */
+            int custom_level = (int)num_a;
+            int max_level = cfg->n_thresholds + 1;
+            if (custom_level < 0) custom_level = 0;
+            if (custom_level > max_level) custom_level = max_level;
+            return custom_level;
+        }
+        if (cfg->method == METHOD_PCT_DIFF) {
+            /* Percentage difference: pct = |a-b| / max(a,b), strict < to match Python */
+            if (num_a == num_b) return cfg->n_thresholds + 1; /* exact */
+            double pd = pct_diff(num_a, num_b);
+            /* Thresholds are maximum pct differences (ascending order: 0.01, 0.05, 0.1) */
+            for (int t = 0; t < cfg->n_thresholds; t++) {
+                if (pd < cfg->thresholds[t])
+                    return cfg->n_thresholds - t;
+            }
+            return 0;
+        }
         if (cfg->method == METHOD_ABS_DATE) {
             /* Absolute date difference in days (Stata numeric dates) */
             if (num_a == num_b) return cfg->n_thresholds + 1; /* exact */
             double diff = fabs(num_a - num_b);
             for (int t = 0; t < cfg->n_thresholds; t++) {
                 if (diff <= cfg->thresholds[t])
+                    return cfg->n_thresholds - t;
+            }
+            return 0;
+        }
+        if (cfg->method == METHOD_ABS_TIME) {
+            /* Absolute time difference in configured units (Stata %tc = ms) */
+            if (num_a == num_b) return cfg->n_thresholds + 1; /* exact */
+            double time_diff = fabs(num_a - num_b) / cfg->time_unit_divisor;
+            for (int t = 0; t < cfg->n_thresholds; t++) {
+                if (time_diff <= cfg->thresholds[t])
                     return cfg->n_thresholds - t;
             }
             return 0;
@@ -837,9 +1431,22 @@ static void config_defaults(Config *cfg) {
     cfg->u_seed = 42;
     cfg->mode = MODE_LEGACY;
     cfg->config_version = 1;
+    cfg->recall = 1.0;
+    cfg->fix_lambda = 0;
+    cfg->em_without_tf = 0;
+    cfg->cluster_threshold = -1.0; /* -1 = use threshold */
+    cfg->use_weight_threshold = 0;
+    cfg->weight_threshold = 0.0;
+    cfg->cluster_method = 0;
+    cfg->salt_partitions = 0;
+    cfg->round_robin_em = 0;
+    cfg->em_tol = EM_TOL;
     for (int k = 0; k < MAX_COMP_VARS; k++) {
         cfg->comp[k].null_mode = -1; /* -1 = use global */
         cfg->comp[k].n_input_vars = 1;
+        cfg->comp[k].tf_weight = 1.0;
+        cfg->comp[k].tf_exact_only = 0;
+        cfg->comp[k].time_unit_divisor = 86400000.0; /* default: days */
     }
 }
 
@@ -874,7 +1481,8 @@ static int parse_config(const char *path, Config *cfg) {
 
         /* Section headers */
         if (*s == '[') {
-            if (strncmp(s, "[general]", 9) == 0) {
+            if (strncmp(s, "[general]", 9) == 0 ||
+                strncmp(s, "[MLABEL_M_OVERRIDE]", 19) == 0) {
                 current_comp = -1;
             } else if (strncmp(s, "[comparison_", 12) == 0) {
                 current_comp = atoi(s + 12);
@@ -892,7 +1500,11 @@ static int parse_config(const char *path, Config *cfg) {
 
         if (current_comp < 0) {
             /* General section */
-            if (strcmp(key, "n_comp") == 0) cfg->n_comp = atoi(val);
+            if (strcmp(key, "n_comp") == 0) {
+                cfg->n_comp = atoi(val);
+                if (cfg->n_comp > MAX_COMP_VARS) cfg->n_comp = MAX_COMP_VARS;
+                if (cfg->n_comp < 0) cfg->n_comp = 0;
+            }
             else if (strcmp(key, "n_block_rules") == 0) cfg->n_block_rules = atoi(val);
             else if (strcmp(key, "link_type") == 0) cfg->link_type = atoi(val);
             else if (strcmp(key, "null_weight") == 0) cfg->null_weight = atoi(val);
@@ -905,23 +1517,61 @@ static int parse_config(const char *path, Config *cfg) {
             else if (strcmp(key, "estimate_u") == 0) cfg->estimate_u = atoi(val);
             else if (strcmp(key, "u_max_pairs") == 0) cfg->u_max_pairs = atoi(val);
             else if (strcmp(key, "u_seed") == 0) cfg->u_seed = atoi(val);
-            else if (strcmp(key, "save_pairs") == 0) strncpy(cfg->save_pairs, val, 511);
+            else if (strcmp(key, "save_pairs") == 0) { strncpy(cfg->save_pairs, val, 511); cfg->save_pairs[511] = '\0'; }
             else if (strcmp(key, "id_var") == 0) {
-                strncpy(cfg->id_var_name, val, MAX_VAR_NAME - 1);
+                strncpy(cfg->id_var_name, val, MAX_VAR_NAME - 1); cfg->id_var_name[MAX_VAR_NAME - 1] = '\0';
                 cfg->has_id_var = (val[0] != '\0');
+            }
+            /* V3 feature parity options */
+            else if (strcmp(key, "recall") == 0) cfg->recall = atof(val);
+            else if (strcmp(key, "fix_lambda") == 0) cfg->fix_lambda = atoi(val);
+            else if (strcmp(key, "em_without_tf") == 0) cfg->em_without_tf = atoi(val);
+            else if (strcmp(key, "cluster_threshold") == 0) cfg->cluster_threshold = atof(val);
+            else if (strcmp(key, "use_weight_threshold") == 0) cfg->use_weight_threshold = atoi(val);
+            else if (strcmp(key, "weight_threshold") == 0) cfg->weight_threshold = atof(val);
+            else if (strcmp(key, "cluster_method") == 0) cfg->cluster_method = atoi(val);
+            else if (strcmp(key, "salt_partitions") == 0) cfg->salt_partitions = atoi(val);
+            else if (strcmp(key, "round_robin_em") == 0) cfg->round_robin_em = atoi(val);
+            else if (strcmp(key, "em_tol") == 0) cfg->em_tol = atof(val);
+            else if (strcmp(key, "mlabel_mprob") == 0) {
+                /* Supervised m-probs: "p0,p1,...|p0,p1,...|..." */
+                char mbuf[2048];
+                strncpy(mbuf, val, sizeof(mbuf) - 1);
+                mbuf[sizeof(mbuf) - 1] = '\0';
+                char *comp_tok = mbuf;
+                int ck = 0;
+                while (comp_tok && ck < cfg->n_comp) {
+                    char *next_comp = strchr(comp_tok, '|');
+                    if (next_comp) *next_comp++ = '\0';
+                    CompConfig *cc2 = &cfg->comp[ck];
+                    cc2->fix_m = 1;
+                    int lev = 0;
+                    char *lev_tok = comp_tok;
+                    while (lev_tok && lev < MAX_LEVELS) {
+                        char *next_lev = strchr(lev_tok, ',');
+                        if (next_lev) *next_lev++ = '\0';
+                        cc2->fixed_m[lev] = atof(lev_tok);
+                        lev++;
+                        lev_tok = next_lev;
+                    }
+                    ck++;
+                    comp_tok = next_comp;
+                }
             }
         }
         else {
             /* Comparison section */
             CompConfig *cc = &cfg->comp[current_comp];
-            if (strcmp(key, "var_name") == 0) strncpy(cc->var_name, val, MAX_VAR_NAME - 1);
+            if (strcmp(key, "var_name") == 0) { strncpy(cc->var_name, val, MAX_VAR_NAME - 1); cc->var_name[MAX_VAR_NAME - 1] = '\0'; }
             else if (strcmp(key, "method") == 0) cc->method = atoi(val);
             else if (strcmp(key, "is_string") == 0) cc->is_string = atoi(val);
             else if (strcmp(key, "tf_adjust") == 0) cc->tf_adjust = atoi(val);
             else if (strcmp(key, "tf_min") == 0) cc->tf_min = atof(val);
-            else if (strcmp(key, "tf_file") == 0) strncpy(cc->tf_file, val, 511);
+            else if (strcmp(key, "tf_file") == 0) { strncpy(cc->tf_file, val, 511); cc->tf_file[511] = '\0'; }
             else if (strcmp(key, "fix_m") == 0) cc->fix_m = atoi(val);
             else if (strcmp(key, "fix_u") == 0) cc->fix_u = atoi(val);
+            else if (strcmp(key, "fix_m_mask") == 0) cc->fix_m_mask = atoi(val);
+            else if (strcmp(key, "fix_u_mask") == 0) cc->fix_u_mask = atoi(val);
             else if (strcmp(key, "thresholds") == 0) {
                 /* Parse comma-separated thresholds */
                 cc->n_thresholds = 0;
@@ -939,10 +1589,11 @@ static int parse_config(const char *path, Config *cfg) {
                 /* Override n_levels for domain methods with fixed internal levels */
                 switch (cc->method) {
                     case METHOD_EXACT:     cc->n_levels = 2; break; /* else + exact */
-                    case METHOD_DOB:       cc->n_levels = 4; break; /* else, year, year+month, exact */
-                    case METHOD_EMAIL:     cc->n_levels = 5; break; /* else, domain, jw-user, user-exact, exact */
+                    case METHOD_DOB:       cc->n_levels = 6; break; /* else, ≤10yr, ≤1yr, ≤1mo, DL≤1, exact */
+                    case METHOD_EMAIL:     cc->n_levels = 5; break; /* else, jw-user, jw-full, user-exact, exact */
                     case METHOD_POSTCODE:  cc->n_levels = 5; break; /* else, area, district, sector, exact */
-                    case METHOD_NAMESWAP:  cc->n_levels = 4; break; /* else, jw-fuzzy, exact-swap, exact */
+                    case METHOD_NAMESWAP:  cc->n_levels = 7; break; /* else, fn-exact, sn-exact, jw≥t2-AND, jw≥t1-AND, swap-exact, exact-both */
+                    case METHOD_NAME:      cc->n_levels = 5; break; /* else, metaphone/jw-low, jw-mid, jw-high, exact */
                     /* METHOD_DISTANCE uses threshold-based levels: n_thresholds + 2 (already set) */
                     default: break;
                 }
@@ -967,6 +1618,17 @@ static int parse_config(const char *path, Config *cfg) {
                     cc->fixed_u[idx++] = atof(tok);
                     tok = strtok(NULL, ",");
                 }
+            }
+            /* V3 per-comparison options */
+            else if (strcmp(key, "null_mode") == 0) cc->null_mode = atoi(val);
+            else if (strcmp(key, "tf_weight") == 0) cc->tf_weight = atof(val);
+            else if (strcmp(key, "tf_exact_only") == 0) cc->tf_exact_only = atoi(val);
+            else if (strcmp(key, "time_unit") == 0) {
+                if (strcmp(val, "seconds") == 0) cc->time_unit_divisor = 1000.0;
+                else if (strcmp(val, "minutes") == 0) cc->time_unit_divisor = 60000.0;
+                else if (strcmp(val, "hours") == 0) cc->time_unit_divisor = 3600000.0;
+                else if (strcmp(val, "days") == 0) cc->time_unit_divisor = 86400000.0;
+                else cc->time_unit_divisor = 86400000.0; /* default: days */
             }
         }
     }
@@ -1021,7 +1683,11 @@ static int parse_config_v2(FILE *f, Config *cfg) {
             char *key = str_strip(s);
             char *val = str_strip(eq + 1);
 
-            if (strcmp(key, "n_comp") == 0) cfg->n_comp = atoi(val);
+            if (strcmp(key, "n_comp") == 0) {
+                cfg->n_comp = atoi(val);
+                if (cfg->n_comp > MAX_COMP_VARS) cfg->n_comp = MAX_COMP_VARS;
+                if (cfg->n_comp < 0) cfg->n_comp = 0;
+            }
             else if (strcmp(key, "n_block_rules") == 0) cfg->n_block_rules = atoi(val);
             else if (strcmp(key, "n_allvars") == 0) cfg->n_allvars = atoi(val);
             else if (strcmp(key, "has_link") == 0) {
@@ -1042,12 +1708,23 @@ static int parse_config_v2(FILE *f, Config *cfg) {
             else if (strcmp(key, "estimate_u") == 0) cfg->estimate_u = atoi(val);
             else if (strcmp(key, "u_max_pairs") == 0) cfg->u_max_pairs = atoi(val);
             else if (strcmp(key, "u_seed") == 0) cfg->u_seed = atoi(val);
-            else if (strcmp(key, "save_pairs") == 0) strncpy(cfg->save_pairs, val, 511);
+            else if (strcmp(key, "save_pairs") == 0) { strncpy(cfg->save_pairs, val, 511); cfg->save_pairs[511] = '\0'; }
             else if (strcmp(key, "max_block_size") == 0) cfg->max_block_size = atoi(val);
             else if (strcmp(key, "id_var") == 0) {
-                strncpy(cfg->id_var_name, val, MAX_VAR_NAME - 1);
+                strncpy(cfg->id_var_name, val, MAX_VAR_NAME - 1); cfg->id_var_name[MAX_VAR_NAME - 1] = '\0';
                 cfg->has_id_var = 1;
             }
+            /* V3 feature parity options in V2 format */
+            else if (strcmp(key, "recall") == 0) cfg->recall = atof(val);
+            else if (strcmp(key, "fix_lambda") == 0) cfg->fix_lambda = atoi(val);
+            else if (strcmp(key, "em_without_tf") == 0) cfg->em_without_tf = atoi(val);
+            else if (strcmp(key, "cluster_threshold") == 0) cfg->cluster_threshold = atof(val);
+            else if (strcmp(key, "use_weight_threshold") == 0) cfg->use_weight_threshold = atoi(val);
+            else if (strcmp(key, "weight_threshold") == 0) cfg->weight_threshold = atof(val);
+            else if (strcmp(key, "cluster_method") == 0) cfg->cluster_method = atoi(val);
+            else if (strcmp(key, "salt_partitions") == 0) cfg->salt_partitions = atoi(val);
+            else if (strcmp(key, "round_robin_em") == 0) cfg->round_robin_em = atoi(val);
+            else if (strcmp(key, "em_tol") == 0) cfg->em_tol = atof(val);
         }
         else if (section == 1) {
             /* [BLOCKING] — currently handled by .ado passing block keys as variables */
@@ -1081,13 +1758,20 @@ static int parse_config_v2(FILE *f, Config *cfg) {
                     else if (strncmp(mv, "dl", 2) == 0) cc->method = METHOD_DL;
                     else if (strncmp(mv, "jaccard", 7) == 0) cc->method = METHOD_JACCARD;
                     else if (strncmp(mv, "exact", 5) == 0) cc->method = METHOD_EXACT;
-                    else if (strncmp(mv, "distance", 8) == 0 || strncmp(mv, "numeric", 7) == 0) cc->method = METHOD_NUMERIC;
+                    else if (strncmp(mv, "numeric", 7) == 0) cc->method = METHOD_NUMERIC;
+                    else if (strncmp(mv, "distance_km", 11) == 0) cc->method = METHOD_DISTANCE;
+                    else if (strncmp(mv, "distance", 8) == 0) cc->method = METHOD_DISTANCE;
                     else if (strncmp(mv, "dob", 3) == 0) cc->method = METHOD_DOB;
                     else if (strncmp(mv, "email", 5) == 0) cc->method = METHOD_EMAIL;
                     else if (strncmp(mv, "postcode", 8) == 0) cc->method = METHOD_POSTCODE;
                     else if (strncmp(mv, "nameswap", 8) == 0) cc->method = METHOD_NAMESWAP;
                     else if (strncmp(mv, "name", 4) == 0) cc->method = METHOD_NAME;
                     else if (strncmp(mv, "custom", 6) == 0) cc->method = METHOD_CUSTOM;
+                    else if (strncmp(mv, "abs_time", 8) == 0) cc->method = METHOD_ABS_TIME;
+                    else if (strncmp(mv, "abs_date", 8) == 0) cc->method = METHOD_ABS_DATE;
+                    else if (strncmp(mv, "cosine", 6) == 0) cc->method = METHOD_COSINE;
+                    else if (strncmp(mv, "intersect", 9) == 0) cc->method = METHOD_INTERSECT;
+                    else if (strncmp(mv, "pct_diff", 8) == 0 || strncmp(mv, "pctdiff", 7) == 0) cc->method = METHOD_PCT_DIFF;
                     else cc->method = atoi(mv);
                 }
                 else if (strncmp(p, "n_levels=", 9) == 0) {
@@ -1123,16 +1807,25 @@ static int parse_config_v2(FILE *f, Config *cfg) {
                     strncpy(cc->var_name, p + 5, (size_t)nlen);
                     cc->var_name[nlen] = '\0';
                 }
+                else if (strncmp(p, "time_unit=", 10) == 0) {
+                    const char *tu = p + 10;
+                    if (strncmp(tu, "seconds", 7) == 0) cc->time_unit_divisor = 1000.0;
+                    else if (strncmp(tu, "minutes", 7) == 0) cc->time_unit_divisor = 60000.0;
+                    else if (strncmp(tu, "hours", 5) == 0) cc->time_unit_divisor = 3600000.0;
+                    else if (strncmp(tu, "days", 4) == 0) cc->time_unit_divisor = 86400000.0;
+                    else cc->time_unit_divisor = 86400000.0; /* default: days */
+                }
             }
 
             /* Set n_levels if not explicitly given */
             if (cc->n_levels == 0) {
                 switch (cc->method) {
                     case METHOD_EXACT:     cc->n_levels = 2; break;
-                    case METHOD_DOB:       cc->n_levels = 4; break;
+                    case METHOD_DOB:       cc->n_levels = 6; break;
                     case METHOD_EMAIL:     cc->n_levels = 5; break;
                     case METHOD_POSTCODE:  cc->n_levels = 5; break;
-                    case METHOD_NAMESWAP:  cc->n_levels = 4; break;
+                    case METHOD_NAMESWAP:  cc->n_levels = 7; break;
+                    case METHOD_NAME:      cc->n_levels = 5; break;
                     default:               cc->n_levels = cc->n_thresholds + 2; break;
                 }
             }
@@ -1174,6 +1867,7 @@ static int parse_config_v2(FILE *f, Config *cfg) {
             int vi = atoi(s) - 1;
             if (vi >= 0 && vi < MAX_COMP_VARS) {
                 strncpy(cfg->comp[vi].var_name, str_strip(eq + 1), MAX_VAR_NAME - 1);
+                cfg->comp[vi].var_name[MAX_VAR_NAME - 1] = '\0';
             }
         }
     }
@@ -1228,15 +1922,15 @@ static int64_t pair_encode(int a, int b) {
 }
 
 static int pairset_insert(PairSet *ps, int a, int b, int rule) {
-    /* Returns 1 if newly inserted, 0 if already existed.
+    /* Returns 1 if newly inserted, 0 if already existed, -1 on OOM.
      * Stores the blocking rule index for the first insertion. */
-    if (!ps) return 0;
+    if (!ps) return -1;
     if (ps->n * 2 >= ps->cap) {
         /* Grow */
         int new_cap = ps->cap * 2;
         int64_t *new_keys = calloc((size_t)new_cap, sizeof(int64_t));
         int *new_rule_id = calloc((size_t)new_cap, sizeof(int));
-        if (!new_keys || !new_rule_id) { free(new_keys); free(new_rule_id); return 0; }
+        if (!new_keys || !new_rule_id) { free(new_keys); free(new_rule_id); return -1; }
         memset(new_keys, 0xFF, (size_t)new_cap * sizeof(int64_t));
         /* Rehash */
         for (int i = 0; i < ps->cap; i++) {
@@ -1361,7 +2055,9 @@ static int em_estimate(
     char ***tf_pair_values,
     double **tf_record_freq,
     const int *pair_a,
-    const int *pair_b
+    const int *pair_b,
+    int fix_lambda,
+    int em_without_tf
 ) {
     int converged_iter = max_iter;
 
@@ -1390,9 +2086,10 @@ static int em_estimate(
             for (int k = 0; k < n_comp; k++) {
                 int level = comp_vectors[i * n_comp + k];
 
-                /* Null handling */
+                /* Null handling: per-comparison override or global */
                 if (level == -1) {
-                    if (null_weight == NULL_NEUTRAL) {
+                    int nm = (comp_cfg[k].null_mode >= 0) ? comp_cfg[k].null_mode : null_weight;
+                    if (nm == NULL_NEUTRAL) {
                         /* Skip: Bayes factor = 1 (no contribution) */
                         continue;
                     } else {
@@ -1404,27 +2101,29 @@ static int em_estimate(
                 double mk = m[k][level];
                 double uk = u[k][level];
 
-                /* TF adjustment: replace u with TF frequency.
-                 * Exact match: use tf_record_freq for record a.
-                 * Fuzzy match: use max(tf_a, tf_b) per Python splink convention.
-                 * Falls back to per-pair string lookup if tf_record_freq unavailable. */
-                if (comp_cfg[k].tf_adjust && level > 0) {
+                /* TF adjustment: Python splink v4 applies TF as a multiplicative
+                 * factor on the Bayes factor: tf_factor = pow(u_exact / tf, w).
+                 * Final BF = (m/u) * tf_factor.
+                 * tf_exact_only: only apply TF at exact-match level.
+                 * tf_weight: exponent on the adjustment ratio (Python convention). */
+                double log_tf_factor = 0.0;
+                int apply_tf = comp_cfg[k].tf_adjust && level > 0 && !em_without_tf;
+                if (apply_tf && comp_cfg[k].tf_exact_only && level != n_levels[k] - 1)
+                    apply_tf = 0;
+                if (apply_tf) {
                     double tf = 0.0;
                     int have_tf = 0;
                     if (tf_record_freq && tf_record_freq[k] && pair_a && pair_b) {
                         double tf_a = tf_record_freq[k][pair_a[i]];
                         double tf_b = tf_record_freq[k][pair_b[i]];
                         if (level == n_levels[k] - 1) {
-                            /* Exact match: use record a's TF */
                             tf = tf_a;
                         } else {
-                            /* Fuzzy match: use max(tf_a, tf_b) */
                             tf = tf_a > tf_b ? tf_a : tf_b;
                         }
                         have_tf = 1;
                     } else if (level == n_levels[k] - 1 && tf_tables && tf_tables[k] &&
                                tf_pair_values && tf_pair_values[i]) {
-                        /* Fallback: per-pair string lookup (exact only) */
                         char *val = tf_pair_values[i][k];
                         if (val && val[0] != '\0') {
                             tf = tf_lookup(tf_tables[k], val, uk > 0 ? uk : 0.01);
@@ -1434,13 +2133,18 @@ static int em_estimate(
                     if (have_tf) {
                         if (tf < comp_cfg[k].tf_min && comp_cfg[k].tf_min > 0)
                             tf = comp_cfg[k].tf_min;
-                        uk = tf;
+                        if (tf < 1e-10) tf = 1e-10;
+                        /* Python formula: tf_factor = pow(u_exact / tf, w) */
+                        double u_exact = u[k][n_levels[k] - 1];
+                        if (u_exact < 1e-10) u_exact = 1e-10;
+                        double w = comp_cfg[k].tf_weight;
+                        log_tf_factor = w * log(u_exact / tf);
                     }
                 }
 
                 if (mk < 1e-10) mk = 1e-10;
                 if (uk < 1e-10) uk = 1e-10;
-                log_m_prod += log(mk);
+                log_m_prod += log(mk) + log_tf_factor;
                 log_u_prod += log(uk);
             }
 
@@ -1470,9 +2174,10 @@ static int em_estimate(
             sum_p += pm;
             for (int k = 0; k < n_comp; k++) {
                 int level = comp_vectors[i * n_comp + k];
-                /* Null handling: skip or penalize */
+                /* Null handling: per-comparison override or global */
                 if (level == -1) {
-                    if (null_weight == NULL_NEUTRAL) continue;
+                    int nm = (comp_cfg[k].null_mode >= 0) ? comp_cfg[k].null_mode : null_weight;
+                    if (nm == NULL_NEUTRAL) continue;
                     else level = 0; /* penalize -> else */
                 }
                 m_count[k][level] += pm;
@@ -1482,19 +2187,29 @@ static int em_estimate(
             }
         }
 
-        /* Update lambda */
-        double new_lambda = sum_p / n_pairs;
-        if (new_lambda < 1e-8) new_lambda = 1e-8;
-        if (new_lambda > 1.0 - 1e-8) new_lambda = 1.0 - 1e-8;
+        /* Update lambda (unless fix_lambda is set) */
+        if (!fix_lambda) {
+            double new_lambda = sum_p / n_pairs;
+            if (new_lambda < 1e-8) new_lambda = 1e-8;
+            if (new_lambda > 1.0 - 1e-8) new_lambda = 1.0 - 1e-8;
 
-        double dl = fabs(*lambda - new_lambda);
-        if (dl > max_change) max_change = dl;
-        *lambda = new_lambda;
+            double dl = fabs(*lambda - new_lambda);
+            if (dl > max_change) max_change = dl;
+            *lambda = new_lambda;
+        }
 
         /* Update m and u per field per level (all levels 0..n_levels-1) */
         for (int k = 0; k < n_comp; k++) {
             for (int l = 0; l < n_levels[k]; l++) {
-                if (!comp_cfg[k].fix_m) {
+                /* Per-level fix check: mask bit overrides, else use fix_m boolean */
+                int m_fixed = comp_cfg[k].fix_m;
+                if (comp_cfg[k].fix_m_mask && l < 32)
+                    m_fixed = (comp_cfg[k].fix_m_mask >> l) & 1;
+                int u_fixed = comp_cfg[k].fix_u;
+                if (comp_cfg[k].fix_u_mask && l < 32)
+                    u_fixed = (comp_cfg[k].fix_u_mask >> l) & 1;
+
+                if (!m_fixed) {
                     double new_mk = m_denom[k] > 0
                         ? m_count[k][l] / m_denom[k]
                         : 1.0 / n_levels[k];
@@ -1502,7 +2217,7 @@ static int em_estimate(
                     if (dm > max_change) max_change = dm;
                     m[k][l] = new_mk;
                 }
-                if (!comp_cfg[k].fix_u) {
+                if (!u_fixed) {
                     double new_uk = u_denom[k] > 0
                         ? u_count[k][l] / u_denom[k]
                         : 1.0 / n_levels[k];
@@ -1511,6 +2226,13 @@ static int em_estimate(
                     u[k][l] = new_uk;
                 }
             }
+        }
+
+        /* Record iteration history */
+        if (iter < EM_MAX_HISTORY) {
+            em_hist_lambda[iter] = *lambda;
+            em_hist_maxchange[iter] = max_change;
+            em_hist_n = iter + 1;
         }
 
         if (verbose) {
@@ -1593,14 +2315,20 @@ static int estimate_u_random(
     XorShift128 rng;
     xorshift_seed(&rng, (uint64_t)seed);
 
-    /* Allocate level counts */
+    /* Allocate level counts and per-field non-null pair counts */
     double **level_counts = calloc((size_t)n_comp, sizeof(double *));
-    if (!level_counts) return -1;
+    double *field_nonnull = calloc((size_t)n_comp, sizeof(double));
+    if (!level_counts || !field_nonnull) {
+        free(level_counts);
+        free(field_nonnull);
+        return -1;
+    }
     for (int k = 0; k < n_comp; k++) {
         level_counts[k] = calloc((size_t)n_levels_arr[k], sizeof(double));
         if (!level_counts[k]) {
             for (int j = 0; j < k; j++) free(level_counts[j]);
             free(level_counts);
+            free(field_nonnull);
             return -1;
         }
     }
@@ -1643,11 +2371,12 @@ static int estimate_u_random(
             int level = compute_comparison_level(
                 &comp_cfg[k], str_a, str_b, num_a, num_b, a_missing, b_missing);
 
-            /* Null (-1): skip, don't count */
+            /* Null (-1): skip, don't count toward this field */
             if (level == -1) continue;
             if (level >= n_levels_arr[k]) level = n_levels_arr[k] - 1;
 
             level_counts[k][level] += 1.0;
+            field_nonnull[k] += 1.0;
         }
         actual_pairs++;
     }
@@ -1655,14 +2384,17 @@ static int estimate_u_random(
     if (actual_pairs == 0) {
         for (int k = 0; k < n_comp; k++) free(level_counts[k]);
         free(level_counts);
+        free(field_nonnull);
         return -1;
     }
 
-    /* Convert counts to frequencies (u-probabilities) */
-    double total = (double)actual_pairs;
+    /* Convert counts to frequencies (u-probabilities).
+     * Normalize per-field by non-null pair count so u-probs sum to ~1.0
+     * even when some fields have missing values. */
     for (int k = 0; k < n_comp; k++) {
+        double denom = field_nonnull[k] > 0 ? field_nonnull[k] : 1.0;
         for (int l = 0; l < n_levels_arr[k]; l++) {
-            double freq = level_counts[k][l] / total;
+            double freq = level_counts[k][l] / denom;
             /* Floor at a small value to prevent zero-division in BF */
             if (freq < 1e-6) freq = 1e-6;
             u_params[k][l] = freq;
@@ -1689,6 +2421,7 @@ static int estimate_u_random(
 
     for (int k = 0; k < n_comp; k++) free(level_counts[k]);
     free(level_counts);
+    free(field_nonnull);
     return actual_pairs;
 }
 
@@ -1857,6 +2590,10 @@ STDLL stata_call(int argc, char *argv[]) {
 
     /* ---- 3. Read link source (if linking mode) ---- */
     if (has_link) {
+        if (SF_var_is_string(link_var)) {
+            SF_error("splink error: linkvar must be a numeric variable\n");
+            rc = 198; goto cleanup;
+        }
         link_source = malloc((size_t)n * sizeof(double));
         if (!link_source) { rc = 909; goto cleanup; }
         for (int i = 0; i < n; i++) {
@@ -1880,6 +2617,7 @@ STDLL stata_call(int argc, char *argv[]) {
                 } else {
                     id_values[i] = strdup("");
                 }
+                if (!id_values[i]) { rc = 909; goto cleanup; }
             }
         } else {
             id_is_string = 0;
@@ -1930,6 +2668,18 @@ STDLL stata_call(int argc, char *argv[]) {
                             double def_u = 1.0 / n; /* default for unseen values */
                             tf_record_freq[k][i] = tf_lookup(tf_tables[k],
                                 str_comp[k][i], def_u);
+                        } else if (!cfg.comp[k].is_string && num_comp[k]) {
+                            /* Numeric: convert to string for TF lookup */
+                            double val = num_comp[k][i];
+                            if (SF_is_missing(val)) {
+                                tf_record_freq[k][i] = 1.0 / n;
+                            } else {
+                                char numbuf[64];
+                                snprintf(numbuf, sizeof(numbuf), "%g", val);
+                                double def_u = 1.0 / n;
+                                tf_record_freq[k][i] = tf_lookup(tf_tables[k],
+                                    numbuf, def_u);
+                            }
                         } else {
                             tf_record_freq[k][i] = 1.0 / n;
                         }
@@ -1988,6 +2738,13 @@ STDLL stata_call(int argc, char *argv[]) {
 
                     /* link_and_dedupe: keep all pairs */
 
+                    /* Blocking salting: skip pairs where salt_a != salt_b */
+                    if (cfg.salt_partitions > 0) {
+                        int salt_a = ai % cfg.salt_partitions;
+                        int salt_b = bj % cfg.salt_partitions;
+                        if (salt_a != salt_b) continue;
+                    }
+
                     pairset_insert(pairset, ai, bj, r);
                 }
             }
@@ -1996,6 +2753,15 @@ STDLL stata_call(int argc, char *argv[]) {
     }
 
     total_pairs = pairset->n;
+
+    if (total_pairs > (long long)INT_MAX) {
+        char buf[256];
+        snprintf(buf, sizeof(buf),
+            "splink warning: %lld pairs exceeds int range; clamping to %d\n",
+            (long long)total_pairs, INT_MAX);
+        SF_display(buf);
+        total_pairs = INT_MAX;
+    }
 
     if (cfg.verbose) {
         char buf[256];
@@ -2066,11 +2832,20 @@ STDLL stata_call(int argc, char *argv[]) {
     comp_vec = malloc((size_t)total_pairs * (size_t)cfg.n_comp * sizeof(int));
     if (!comp_vec) { rc = 909; goto cleanup; }
 
-    /* Prepare n_levels array */
+    /* Prepare n_levels array — validate each comparison has >= 2 levels */
     n_levels = malloc((size_t)cfg.n_comp * sizeof(int));
     if (!n_levels) { rc = 909; goto cleanup; }
-    for (int k = 0; k < cfg.n_comp; k++)
+    for (int k = 0; k < cfg.n_comp; k++) {
         n_levels[k] = cfg.comp[k].n_levels;
+        if (n_levels[k] < 2) {
+            char buf[256];
+            snprintf(buf, sizeof(buf),
+                "splink error: comparison %d has %d levels (minimum 2 required)\n",
+                k, n_levels[k]);
+            SF_display(buf);
+            rc = 198; goto cleanup;
+        }
+    }
 
     /* Allocate TF pair value storage (for exact-match pairs on TF fields) */
     {
@@ -2099,6 +2874,11 @@ STDLL stata_call(int argc, char *argv[]) {
                 str_b = str_comp[k][bi];
                 a_missing = (str_a[0] == '\0');
                 b_missing = (str_b[0] == '\0');
+                /* Multi-column vars use tab separators; empty component = missing */
+                if (!a_missing && strchr(str_a, '\t'))
+                    a_missing = has_empty_tab_component(str_a);
+                if (!b_missing && strchr(str_b, '\t'))
+                    b_missing = has_empty_tab_component(str_b);
             } else {
                 num_a = num_comp[k][ai];
                 num_b = num_comp[k][bi];
@@ -2115,12 +2895,19 @@ STDLL stata_call(int argc, char *argv[]) {
             comp_vec[i * cfg.n_comp + k] = level;
 
             /* Store value for TF lookup on exact matches (max level) */
-            if (level == n_levels[k] - 1 && cfg.comp[k].tf_adjust && cfg.comp[k].is_string) {
+            if (level == n_levels[k] - 1 && cfg.comp[k].tf_adjust) {
                 if (!tf_pair_values[i]) {
                     tf_pair_values[i] = calloc((size_t)cfg.n_comp, sizeof(char *));
                 }
                 if (tf_pair_values[i]) {
-                    tf_pair_values[i][k] = (char *)str_a; /* safe: str_a lives until cleanup */
+                    if (cfg.comp[k].is_string) {
+                        tf_pair_values[i][k] = (char *)str_a; /* borrowed ptr */
+                    } else {
+                        /* Numeric: convert to string for TF (must free later) */
+                        char numbuf[64];
+                        snprintf(numbuf, sizeof(numbuf), "%g", num_a);
+                        tf_pair_values[i][k] = strdup(numbuf);
+                    }
                 }
                 has_tf_for_pair = 1;
             }
@@ -2200,6 +2987,34 @@ STDLL stata_call(int argc, char *argv[]) {
     p_match = malloc((size_t)total_pairs * sizeof(double));
     if (!p_match) { rc = 909; goto cleanup; }
 
+    /* MODE_GAMMA: output comparison vectors only, no EM or scoring */
+    if (cfg.mode == MODE_GAMMA) {
+        if (cfg.verbose)
+            SF_display("splink: MODE_GAMMA — outputting gamma vectors only\n");
+        if (cfg.save_pairs[0] != '\0') {
+            FILE *gf = fopen(cfg.save_pairs, "w");
+            if (gf) {
+                /* Header: obs_a, obs_b, gamma_0, gamma_1, ..., gamma_{n-1} */
+                fprintf(gf, "obs_a,obs_b");
+                for (int k = 0; k < cfg.n_comp; k++)
+                    fprintf(gf, ",gamma_%d", k);
+                fprintf(gf, "\n");
+                for (long long i = 0; i < total_pairs; i++) {
+                    fprintf(gf, "%d,%d", pair_a[i] + 1, pair_b[i] + 1);
+                    for (int k = 0; k < cfg.n_comp; k++)
+                        fprintf(gf, ",%d", comp_vec[i * cfg.n_comp + k]);
+                    fprintf(gf, "\n");
+                }
+                fclose(gf);
+            }
+        }
+        /* Return total_pairs in r(npairs) via Stata scalar */
+        char buf[256];
+        snprintf(buf, sizeof(buf), "%lld", total_pairs);
+        SF_scal_save("_splink_npairs", (double)total_pairs);
+        rc = 0; goto cleanup;
+    }
+
     /* MODE_SCORE: skip EM entirely, use provided fixed params for scoring */
     if (cfg.mode == MODE_SCORE) {
         if (cfg.verbose)
@@ -2212,13 +3027,18 @@ STDLL stata_call(int argc, char *argv[]) {
             for (int k = 0; k < cfg.n_comp; k++) {
                 int level = comp_vec[i * cfg.n_comp + k];
                 if (level == -1) {
-                    if (cfg.null_weight == NULL_NEUTRAL) continue;
+                    int nm = (cfg.comp[k].null_mode >= 0) ? cfg.comp[k].null_mode : cfg.null_weight;
+                    if (nm == NULL_NEUTRAL) continue;
                     else level = 0;
                 }
                 double mk = m_params[k][level];
                 double uk = u_params[k][level];
-                /* TF adjustment (fuzzy + exact) */
-                if (cfg.comp[k].tf_adjust && level > 0) {
+                /* TF adjustment: multiplicative factor pow(u_exact/tf, w) */
+                double log_tf_factor = 0.0;
+                int apply_tf = cfg.comp[k].tf_adjust && level > 0;
+                if (apply_tf && cfg.comp[k].tf_exact_only && level != n_levels[k] - 1)
+                    apply_tf = 0;
+                if (apply_tf) {
                     double tf = 0.0;
                     int have_tf = 0;
                     if (tf_record_freq && tf_record_freq[k]) {
@@ -2237,12 +3057,16 @@ STDLL stata_call(int argc, char *argv[]) {
                     if (have_tf) {
                         if (tf < cfg.comp[k].tf_min && cfg.comp[k].tf_min > 0)
                             tf = cfg.comp[k].tf_min;
-                        uk = tf;
+                        if (tf < 1e-10) tf = 1e-10;
+                        double u_exact = u_params[k][n_levels[k] - 1];
+                        if (u_exact < 1e-10) u_exact = 1e-10;
+                        double w = cfg.comp[k].tf_weight;
+                        log_tf_factor = w * log(u_exact / tf);
                     }
                 }
                 if (mk < 1e-10) mk = 1e-10;
                 if (uk < 1e-10) uk = 1e-10;
-                log_m_prod += log(mk);
+                log_m_prod += log(mk) + log_tf_factor;
                 log_u_prod += log(uk);
             }
             double log_num = log(lambda) + log_m_prod;
@@ -2259,12 +3083,200 @@ STDLL stata_call(int argc, char *argv[]) {
 
     if (cfg.verbose) SF_display("splink: running EM estimation...\n");
 
-    em_iters = em_estimate(comp_vec, (int)total_pairs, cfg.n_comp,
-                           n_levels, m_params, u_params, &lambda, p_match,
-                           cfg.max_iter, EM_TOL, cfg.verbose,
-                           cfg.null_weight, cfg.comp,
-                           tf_tables, tf_pair_values,
-                           tf_record_freq, pair_a, pair_b);
+    if (cfg.round_robin_em && cfg.n_block_rules > 1) {
+        /* Round-robin EM: train per blocking rule, then average m/u parameters */
+        if (cfg.verbose) SF_display("splink: round-robin EM across blocking rules...\n");
+
+        /* Accumulate m/u sums for averaging */
+        double **m_sum = calloc((size_t)cfg.n_comp, sizeof(double *));
+        double **u_sum = calloc((size_t)cfg.n_comp, sizeof(double *));
+        if (!m_sum || !u_sum) { rc = 909; goto cleanup; }
+        for (int k = 0; k < cfg.n_comp; k++) {
+            m_sum[k] = calloc((size_t)n_levels[k], sizeof(double));
+            u_sum[k] = calloc((size_t)n_levels[k], sizeof(double));
+            if (!m_sum[k] || !u_sum[k]) { rc = 909; goto cleanup; }
+        }
+
+        double lambda_sum = 0.0;
+        int n_rules_used = 0;
+
+        for (int rule = 0; rule < cfg.n_block_rules; rule++) {
+            /* Count pairs for this rule */
+            int rule_count = 0;
+            for (int i = 0; i < (int)total_pairs; i++) {
+                if (match_key[i] == rule) rule_count++;
+            }
+            if (rule_count < 2) continue; /* skip rules with too few pairs */
+
+            /* Build subset arrays */
+            int *sub_comp = malloc((size_t)rule_count * (size_t)cfg.n_comp * sizeof(int));
+            int *sub_pair_a = malloc((size_t)rule_count * sizeof(int));
+            int *sub_pair_b = malloc((size_t)rule_count * sizeof(int));
+            double *sub_p_match = calloc((size_t)rule_count, sizeof(double));
+            char ***sub_tf_vals = NULL;
+            double **sub_tf_freq = NULL;
+
+            if (!sub_comp || !sub_pair_a || !sub_pair_b || !sub_p_match) {
+                free(sub_comp); free(sub_pair_a); free(sub_pair_b); free(sub_p_match);
+                rc = 909; goto cleanup;
+            }
+
+            /* Build TF subset arrays if TF is active.
+             * tf_pair_values is [pair][comp], tf_record_freq is [comp][global_record].
+             * sub_tf_vals must also be [subset_pair][comp] for em_estimate.
+             * tf_record_freq can be passed directly since sub_pair_a holds global indices. */
+            if (tf_pair_values) {
+                sub_tf_vals = calloc((size_t)rule_count, sizeof(char **));
+                if (!sub_tf_vals) { rc = 909; goto cleanup; }
+            }
+
+            int si = 0;
+            for (int i = 0; i < (int)total_pairs; i++) {
+                if (match_key[i] != rule) continue;
+                memcpy(&sub_comp[si * cfg.n_comp], &comp_vec[i * cfg.n_comp],
+                       (size_t)cfg.n_comp * sizeof(int));
+                sub_pair_a[si] = pair_a[i];
+                sub_pair_b[si] = pair_b[i];
+                if (tf_pair_values && tf_pair_values[i]) {
+                    sub_tf_vals[si] = tf_pair_values[i]; /* share pointer: [pair][comp] */
+                }
+                si++;
+            }
+
+            /* Initialize per-rule m/u from current params */
+            double **rule_m = calloc((size_t)cfg.n_comp, sizeof(double *));
+            double **rule_u = calloc((size_t)cfg.n_comp, sizeof(double *));
+            for (int k = 0; k < cfg.n_comp; k++) {
+                rule_m[k] = malloc((size_t)n_levels[k] * sizeof(double));
+                rule_u[k] = malloc((size_t)n_levels[k] * sizeof(double));
+                memcpy(rule_m[k], m_params[k], (size_t)n_levels[k] * sizeof(double));
+                memcpy(rule_u[k], u_params[k], (size_t)n_levels[k] * sizeof(double));
+            }
+            double rule_lambda = lambda;
+
+            /* Pass tf_record_freq directly — sub_pair_a holds global record indices,
+             * so em_estimate's tf_record_freq[k][pair_a[i]] lookups remain correct. */
+            int rule_iters = em_estimate(sub_comp, rule_count, cfg.n_comp,
+                                         n_levels, rule_m, rule_u, &rule_lambda,
+                                         sub_p_match, cfg.max_iter, cfg.em_tol,
+                                         0, cfg.null_weight, cfg.comp,
+                                         tf_tables, sub_tf_vals, tf_record_freq,
+                                         sub_pair_a, sub_pair_b,
+                                         cfg.fix_lambda, cfg.em_without_tf);
+
+            if (rule_iters >= 0) {
+                for (int k = 0; k < cfg.n_comp; k++) {
+                    for (int l = 0; l < n_levels[k]; l++) {
+                        m_sum[k][l] += rule_m[k][l];
+                        u_sum[k][l] += rule_u[k][l];
+                    }
+                }
+                lambda_sum += rule_lambda;
+                n_rules_used++;
+            }
+
+            /* Cleanup per-rule allocations */
+            for (int k = 0; k < cfg.n_comp; k++) {
+                free(rule_m[k]); free(rule_u[k]);
+            }
+            free(rule_m); free(rule_u);
+            free(sub_comp); free(sub_pair_a); free(sub_pair_b); free(sub_p_match);
+            /* sub_tf_vals entries are shared pointers to tf_pair_values[i] — don't free them */
+            free(sub_tf_vals);
+        }
+
+        /* Average parameters across rules */
+        if (n_rules_used > 0) {
+            for (int k = 0; k < cfg.n_comp; k++) {
+                for (int l = 0; l < n_levels[k]; l++) {
+                    m_params[k][l] = m_sum[k][l] / n_rules_used;
+                    u_params[k][l] = u_sum[k][l] / n_rules_used;
+                }
+            }
+            lambda = lambda_sum / n_rules_used;
+            em_iters = cfg.max_iter; /* mark as complete */
+        }
+
+        for (int k = 0; k < cfg.n_comp; k++) {
+            free(m_sum[k]); free(u_sum[k]);
+        }
+        free(m_sum); free(u_sum);
+
+        if (cfg.verbose) {
+            char buf[256];
+            snprintf(buf, sizeof(buf),
+                "splink: round-robin EM used %d/%d rules, averaged lambda=%.6f\n",
+                n_rules_used, cfg.n_block_rules, lambda);
+            SF_display(buf);
+        }
+
+        /* Recompute p_match with averaged parameters on all pairs */
+        for (int i = 0; i < (int)total_pairs; i++) {
+            double log_m_prod = 0.0, log_u_prod = 0.0;
+            for (int k = 0; k < cfg.n_comp; k++) {
+                int level = comp_vec[i * cfg.n_comp + k];
+                if (level == -1) {
+                    int nm = (cfg.comp[k].null_mode >= 0) ? cfg.comp[k].null_mode : cfg.null_weight;
+                    if (nm == NULL_NEUTRAL) continue;
+                    else level = 0;
+                }
+                double mk = m_params[k][level];
+                double uk = u_params[k][level];
+                /* TF adjustment: multiplicative factor pow(u_exact/tf, w) */
+                double log_tf_factor = 0.0;
+                int apply_tf = cfg.comp[k].tf_adjust && level > 0;
+                if (apply_tf && cfg.comp[k].tf_exact_only && level != n_levels[k] - 1)
+                    apply_tf = 0;
+                if (apply_tf) {
+                    double tf = 0.0;
+                    int have_tf = 0;
+                    if (tf_record_freq && tf_record_freq[k]) {
+                        double tf_a = tf_record_freq[k][pair_a[i]];
+                        double tf_b = tf_record_freq[k][pair_b[i]];
+                        tf = (level == n_levels[k] - 1) ? tf_a : (tf_a > tf_b ? tf_a : tf_b);
+                        have_tf = 1;
+                    } else if (level == n_levels[k] - 1 && tf_tables && tf_tables[k] &&
+                               tf_pair_values && tf_pair_values[i]) {
+                        char *val = tf_pair_values[i][k];
+                        if (val && val[0] != '\0') {
+                            tf = tf_lookup(tf_tables[k], val, uk > 0 ? uk : 0.01);
+                            have_tf = 1;
+                        }
+                    }
+                    if (have_tf) {
+                        if (tf < cfg.comp[k].tf_min && cfg.comp[k].tf_min > 0)
+                            tf = cfg.comp[k].tf_min;
+                        if (tf < 1e-10) tf = 1e-10;
+                        double u_exact = u_params[k][n_levels[k] - 1];
+                        if (u_exact < 1e-10) u_exact = 1e-10;
+                        double w = cfg.comp[k].tf_weight;
+                        log_tf_factor = w * log(u_exact / tf);
+                    }
+                }
+                if (mk < 1e-10) mk = 1e-10;
+                if (uk < 1e-10) uk = 1e-10;
+                log_m_prod += log(mk) + log_tf_factor;
+                log_u_prod += log(uk);
+            }
+            double log_num = log(lambda) + log_m_prod;
+            double log_den_other = log(1.0 - lambda) + log_u_prod;
+            double log_den;
+            if (log_num > log_den_other)
+                log_den = log_num + log1p(exp(log_den_other - log_num));
+            else
+                log_den = log_den_other + log1p(exp(log_num - log_den_other));
+            p_match[i] = exp(log_num - log_den);
+        }
+    } else {
+        em_hist_n = 0; /* Reset history for main EM run */
+        em_iters = em_estimate(comp_vec, (int)total_pairs, cfg.n_comp,
+                               n_levels, m_params, u_params, &lambda, p_match,
+                               cfg.max_iter, cfg.em_tol, cfg.verbose,
+                               cfg.null_weight, cfg.comp,
+                               tf_tables, tf_pair_values,
+                               tf_record_freq, pair_a, pair_b,
+                               cfg.fix_lambda, cfg.em_without_tf);
+    }
 
     if (em_iters < 0) {
         SF_error("splink_plugin: EM failed (out of memory)\n");
@@ -2282,7 +3294,7 @@ STDLL stata_call(int argc, char *argv[]) {
     /* MODE_TRAIN: estimate lambda deterministically after EM */
     if (cfg.mode == MODE_TRAIN) {
         double det_lambda = estimate_lambda_deterministic(
-            comp_vec, total_pairs, cfg.n_comp, n_levels, 1.0);
+            comp_vec, total_pairs, cfg.n_comp, n_levels, cfg.recall);
         if (cfg.verbose) {
             char buf[256];
             snprintf(buf, sizeof(buf),
@@ -2352,9 +3364,10 @@ post_em:
                 for (int k = 0; k < cfg.n_comp; k++) {
                     int level = comp_vec[i * cfg.n_comp + k];
 
-                    /* Null handling for pairwise output */
+                    /* Null handling for pairwise output: per-comparison override */
                     if (level == -1) {
-                        if (cfg.null_weight == NULL_NEUTRAL) {
+                        int nm = (cfg.comp[k].null_mode >= 0) ? cfg.comp[k].null_mode : cfg.null_weight;
+                        if (nm == NULL_NEUTRAL) {
                             bf_vals[k] = 0.0; /* log2(1) = 0, neutral */
                             continue;
                         } else {
@@ -2364,45 +3377,49 @@ post_em:
 
                     double mk = m_params[k][level];
                     double uk = u_params[k][level];
-                    double uk_base = uk; /* u before TF adjustment */
 
-                    /* TF adjustment (fuzzy + exact) */
-                    if (cfg.comp[k].tf_adjust && level > 0) {
-                        double tf = 0.0;
-                        int have_tf = 0;
-                        if (tf_record_freq && tf_record_freq[k]) {
-                            double tf_a = tf_record_freq[k][pair_a[i]];
-                            double tf_b = tf_record_freq[k][pair_b[i]];
-                            tf_l_vals[k] = tf_a;
-                            tf_r_vals[k] = tf_b;
-                            tf = (level == n_levels[k] - 1) ? tf_a : (tf_a > tf_b ? tf_a : tf_b);
-                            have_tf = 1;
-                        } else if (level == n_levels[k] - 1 && tf_tables && tf_tables[k] &&
-                                   tf_pair_values && tf_pair_values[i]) {
-                            char *val = tf_pair_values[i][k];
-                            if (val && val[0] != '\0') {
-                                tf = tf_lookup(tf_tables[k], val, uk > 0 ? uk : 0.01);
-                                tf_l_vals[k] = tf;
-                                tf_r_vals[k] = tf;
+                    /* TF adjustment: multiplicative factor pow(u_exact/tf, w) */
+                    {
+                        int do_tf = cfg.comp[k].tf_adjust && level > 0;
+                        if (do_tf && cfg.comp[k].tf_exact_only && level != n_levels[k] - 1)
+                            do_tf = 0;
+                        if (do_tf) {
+                            double tf = 0.0;
+                            int have_tf = 0;
+                            if (tf_record_freq && tf_record_freq[k]) {
+                                double tf_a = tf_record_freq[k][pair_a[i]];
+                                double tf_b = tf_record_freq[k][pair_b[i]];
+                                tf_l_vals[k] = tf_a;
+                                tf_r_vals[k] = tf_b;
+                                tf = (level == n_levels[k] - 1) ? tf_a : (tf_a > tf_b ? tf_a : tf_b);
                                 have_tf = 1;
+                            } else if (level == n_levels[k] - 1 && tf_tables && tf_tables[k] &&
+                                       tf_pair_values && tf_pair_values[i]) {
+                                char *val = tf_pair_values[i][k];
+                                if (val && val[0] != '\0') {
+                                    tf = tf_lookup(tf_tables[k], val, uk > 0 ? uk : 0.01);
+                                    tf_l_vals[k] = tf;
+                                    tf_r_vals[k] = tf;
+                                    have_tf = 1;
+                                }
                             }
-                        }
-                        if (have_tf) {
-                            if (tf < cfg.comp[k].tf_min && cfg.comp[k].tf_min > 0)
-                                tf = cfg.comp[k].tf_min;
-                            uk = tf;
-                            /* bf_tf_adj = (u_base / tf)^1 = ratio of TF-adjusted vs base */
-                            if (uk_base > 1e-10)
-                                bf_tf_adj[k] = uk_base / tf;
-                            else
-                                bf_tf_adj[k] = 1.0;
+                            if (have_tf) {
+                                if (tf < cfg.comp[k].tf_min && cfg.comp[k].tf_min > 0)
+                                    tf = cfg.comp[k].tf_min;
+                                if (tf < 1e-10) tf = 1e-10;
+                                double u_exact = u_params[k][n_levels[k] - 1];
+                                if (u_exact < 1e-10) u_exact = 1e-10;
+                                double w = cfg.comp[k].tf_weight;
+                                /* TF adjustment in log2 space: w * log2(u_exact / tf) */
+                                bf_tf_adj[k] = w * log2(u_exact / tf);
+                            }
                         }
                     }
 
                     if (mk < 1e-10) mk = 1e-10;
                     if (uk < 1e-10) uk = 1e-10;
 
-                    bf_vals[k] = log2(mk / uk);
+                    bf_vals[k] = log2(mk / uk) + bf_tf_adj[k];
                     total_log2_bf += bf_vals[k];
                 }
 
@@ -2415,8 +3432,9 @@ post_em:
                 /* Output IDs or observation numbers */
                 if (cfg.has_id_var) {
                     if (id_is_string && id_values) {
-                        fprintf(pf, "%s,%s",
-                            id_values[pair_a[i]], id_values[pair_b[i]]);
+                        csv_write_field(pf, id_values[pair_a[i]]);
+                        fputc(',', pf);
+                        csv_write_field(pf, id_values[pair_b[i]]);
                     } else if (id_num_values) {
                         fprintf(pf, "%.0f,%.0f",
                             id_num_values[pair_a[i]], id_num_values[pair_b[i]]);
@@ -2453,10 +3471,84 @@ post_em:
     uf = uf_create(n);
     if (!uf) { rc = 909; goto cleanup; }
 
-    for (long long i = 0; i < total_pairs; i++) {
-        if (p_match[i] >= cfg.threshold) {
-            uf_union(uf, pair_a[i], pair_b[i]);
-            n_matches++;
+    {
+        /* Determine effective cluster threshold */
+        double ct = (cfg.cluster_threshold >= 0) ? cfg.cluster_threshold : cfg.threshold;
+
+        if (cfg.cluster_method == 1) {
+            /* Best-link clustering: each record links to at most one other */
+            double *best_score = calloc((size_t)n, sizeof(double));
+            int *best_partner = malloc((size_t)n * sizeof(int));
+            if (!best_score || !best_partner) { free(best_score); free(best_partner); rc = 909; goto cleanup; }
+            for (int bi = 0; bi < n; bi++) { best_score[bi] = -1e30; best_partner[bi] = -1; }
+
+            for (long long i = 0; i < total_pairs; i++) {
+                int above;
+                if (cfg.use_weight_threshold) {
+                    /* Compute match_weight for this pair */
+                    double mw = 0.0;
+                    for (int k = 0; k < cfg.n_comp; k++) {
+                        int level = comp_vec[i * cfg.n_comp + k];
+                        if (level == -1) {
+                            int nm = (cfg.comp[k].null_mode >= 0) ? cfg.comp[k].null_mode : cfg.null_weight;
+                            if (nm == NULL_NEUTRAL) continue;
+                            else level = 0;
+                        }
+                        double mk = m_params[k][level], uk2 = u_params[k][level];
+                        if (mk < 1e-10) mk = 1e-10;
+                        if (uk2 < 1e-10) uk2 = 1e-10;
+                        mw += log2(mk / uk2);
+                    }
+                    above = (mw >= cfg.weight_threshold);
+                } else {
+                    above = (p_match[i] >= ct);
+                }
+                if (above) {
+                    n_matches++;
+                    if (p_match[i] > best_score[pair_a[i]]) {
+                        best_score[pair_a[i]] = p_match[i];
+                        best_partner[pair_a[i]] = pair_b[i];
+                    }
+                    if (p_match[i] > best_score[pair_b[i]]) {
+                        best_score[pair_b[i]] = p_match[i];
+                        best_partner[pair_b[i]] = pair_a[i];
+                    }
+                }
+            }
+            /* Union only best links */
+            for (int bi = 0; bi < n; bi++) {
+                if (best_partner[bi] >= 0)
+                    uf_union(uf, bi, best_partner[bi]);
+            }
+            free(best_score);
+            free(best_partner);
+        } else {
+            /* Connected-components clustering (default) */
+            for (long long i = 0; i < total_pairs; i++) {
+                int above;
+                if (cfg.use_weight_threshold) {
+                    double mw = 0.0;
+                    for (int k = 0; k < cfg.n_comp; k++) {
+                        int level = comp_vec[i * cfg.n_comp + k];
+                        if (level == -1) {
+                            int nm = (cfg.comp[k].null_mode >= 0) ? cfg.comp[k].null_mode : cfg.null_weight;
+                            if (nm == NULL_NEUTRAL) continue;
+                            else level = 0;
+                        }
+                        double mk = m_params[k][level], uk2 = u_params[k][level];
+                        if (mk < 1e-10) mk = 1e-10;
+                        if (uk2 < 1e-10) uk2 = 1e-10;
+                        mw += log2(mk / uk2);
+                    }
+                    above = (mw >= cfg.weight_threshold);
+                } else {
+                    above = (p_match[i] >= ct);
+                }
+                if (above) {
+                    uf_union(uf, pair_a[i], pair_b[i]);
+                    n_matches++;
+                }
+            }
         }
     }
 
@@ -2497,15 +3589,29 @@ post_em:
             fprintf(df, "em_iterations=%d\n", em_iters);
             fprintf(df, "n_comp=%d\n", cfg.n_comp);
             fprintf(df, "mode=%d\n", cfg.mode);
+            fprintf(df, "link_type=%s\n",
+                cfg.link_type == LINK_ONLY ? "link_only" :
+                cfg.link_type == LINK_AND_DEDUPE ? "link_and_dedupe" : "dedupe_only");
 
             for (int k = 0; k < cfg.n_comp; k++) {
                 fprintf(df, "comp_%d_n_levels=%d\n", k, n_levels[k]);
                 fprintf(df, "comp_%d_method=%d\n", k, cfg.comp[k].method);
                 if (cfg.comp[k].var_name[0])
                     fprintf(df, "comp_%d_var_name=%s\n", k, cfg.comp[k].var_name);
+                if (cfg.comp[k].tf_adjust && cfg.comp[k].var_name[0])
+                    fprintf(df, "comp_%d_tf_column=%s\n", k, cfg.comp[k].var_name);
+                fprintf(df, "comp_%d_tf_weight=%.4f\n", k, cfg.comp[k].tf_weight);
                 for (int l = 0; l < n_levels[k]; l++) {
                     fprintf(df, "m_%d_%d=%.8f\n", k, l, m_params[k][l]);
                     fprintf(df, "u_%d_%d=%.8f\n", k, l, u_params[k][l]);
+                }
+            }
+            /* EM iteration history */
+            if (em_hist_n > 0) {
+                fprintf(df, "em_history_n=%d\n", em_hist_n);
+                for (int it = 0; it < em_hist_n; it++) {
+                    fprintf(df, "em_hist_%d_lambda=%.8f\n", it, em_hist_lambda[it]);
+                    fprintf(df, "em_hist_%d_maxchange=%.8f\n", it, em_hist_maxchange[it]);
                 }
             }
             fclose(df);
@@ -2572,8 +3678,17 @@ cleanup:
         free(tf_tables);
     }
     if (tf_pair_values) {
-        for (long long i = 0; i < total_pairs; i++)
-            if (tf_pair_values[i]) free(tf_pair_values[i]);
+        for (long long i = 0; i < total_pairs; i++) {
+            if (tf_pair_values[i]) {
+                /* Free strdup'd numeric TF values (string ones are borrowed) */
+                for (int k = 0; k < cfg.n_comp; k++) {
+                    if (tf_pair_values[i][k] && !cfg.comp[k].is_string) {
+                        free(tf_pair_values[i][k]);
+                    }
+                }
+                free(tf_pair_values[i]);
+            }
+        }
         free(tf_pair_values);
     }
 
