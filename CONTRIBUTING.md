@@ -80,6 +80,8 @@ Thanks for considering a contribution! The easiest way to help is by adding docu
 
    d. **Iterate.** Update your package docs based on what you learned, then re-run. The test should pass cleanly before you open a PR.
 
+   You can also automate this whole loop in Claude Code: spawn a subagent to run the test task, and prompt it to report back what went wrong, why the skill documentation may have caused the error, and how the docs should be improved. This lets Claude test its own documentation and propose fixes without manual intervention.
+
    This feedback loop is how the skill improves — errors reveal gaps in the documentation that wouldn't be obvious just from reading it.
 
 6. **Open a pull request** with a brief description of the package and why it's useful. Include your test results. PRs will be reviewed by Claude Code for accuracy, completeness, and consistency with the existing skill documentation before being accepted.
