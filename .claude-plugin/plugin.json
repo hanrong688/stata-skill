@@ -1,6 +1,6 @@
 {
-  "name": "stata-skill",
-  "description": "Stata development skills — comprehensive Stata reference and C/C++ plugin development for Stata.",
+  "name": "stata-bundle",
+  "description": "Both Stata skills — comprehensive Stata reference plus C/C++ plugin development for Stata.",
   "version": "1.0.0",
   "author": {
     "name": "Dylan Moore"

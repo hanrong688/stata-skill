@@ -1,37 +1,38 @@
 # stata-skill
 
-Claude Code plugin containing two skills for Stata development.
+Two Stata skills, installable individually or as a bundle via [dylantmoore/claude-plugins](https://github.com/dylantmoore/claude-plugins).
 
 ## Skills
 
-### 1. `stata` (skills/stata/)
-General Stata reference — syntax, data management, econometrics, causal inference, graphics, and 20+ community packages. Uses progressive disclosure: a routing table in SKILL.md directs to 57 reference files loaded on demand.
-
-### 2. `stata-c-plugins` (skills/stata-c-plugins/)
-C plugin development for Stata — SDK setup, memory safety, .ado wrappers, cross-platform compilation, performance optimization, debugging, and packaging. Includes a translation workflow for porting Python/R packages into Stata with C plugin acceleration.
-
-Reference files are loaded on demand:
-- `performance_patterns.md` — pthreads, XorShift RNG, quickselect, pre-sorted indices
-- `packaging_and_help.md` — .toc/.pkg/.sthlp templates, build scripts
-- `translation_workflow.md` — scoping source packages, architecture decisions, correlation-based testing
-- `testing_strategy.md` — reference data generation, correctness/integration/stress tests
-- `cpp_plugins.md` — when to use C++ over C, extern "C" pattern, exception safety, compilation, wrapping libraries
+| Plugin name | What you get |
+|-------------|-------------|
+| **stata** | General Stata reference — syntax, data management, econometrics, causal inference, graphics, Mata, 20+ community packages |
+| **stata-c-plugins** | C/C++ plugin development — SDK, .ado wrappers, cross-platform builds, performance, Python/R translation |
+| **stata-bundle** | Both of the above (installs the whole repo) |
 
 ## Repo Structure
 
 ```
 .claude-plugin/
-├── marketplace.json     # Registers both skills
-└── plugin.json          # Plugin metadata
-skills/
-├── stata/               # General Stata reference
-│   ├── SKILL.md
-│   ├── references/      # 37 topic files
-│   └── packages/        # 20 community package guides
-└── stata-c-plugins/     # C plugin development
-    ├── SKILL.md
-    └── references/      # 5 reference files
+└── plugin.json                   # Bundle plugin (whole repo = both skills)
+skills/                           # Symlinks for bundle installs
+├── stata -> ../plugins/stata/skills/stata
+└── stata-c-plugins -> ../plugins/stata-c-plugins/skills/stata-c-plugins
+plugins/
+├── stata/                        # Standalone plugin: stata only
+│   ├── .claude-plugin/plugin.json
+│   └── skills/stata/             # Actual skill files
+│       ├── SKILL.md
+│       ├── references/           # 37 topic files
+│       └── packages/             # 20 community package guides
+└── stata-c-plugins/              # Standalone plugin: c-plugins only
+    ├── .claude-plugin/plugin.json
+    └── skills/stata-c-plugins/   # Actual skill files
+        ├── SKILL.md
+        └── references/           # 5 reference files
 ```
+
+Skill files live in `plugins/*/skills/` (single source of truth). Root `skills/` has symlinks so the bundle resolves both.
 
 ## Example Applications
 
