@@ -64,17 +64,25 @@ Thanks for considering a contribution! The easiest way to help is by adding docu
    | `packages/your-package.md` | Brief description of what it does |
    ```
 
-5. **Add a test task** in `tests/tasks/` that exercises the package. Follow the format of existing tasks (see `tests/README.md`). Your task should:
-   - Ask Claude to solve a realistic problem using the package
-   - Exercise the key options and workflows you documented
-   - Cover at least one gotcha if applicable
+5. **Test your package documentation.** The goal is to verify that Claude can actually use what you wrote to solve real problems. The workflow:
 
-   Run the test through the pipeline to verify it passes:
+   a. **Write a test task** in `tests/tasks/` that asks Claude to do something realistic with the package (see existing tasks for the format).
+
+   b. **Run it as a subagent** — send the task to a fresh Claude instance that has the skill installed. This simulates a real user:
    ```bash
    ./tests/scripts/run_pipeline.sh tests/tasks/your_task.md
    ```
 
-6. **Open a pull request** with a brief description of the package and why it's useful. Note: PRs will be reviewed by Claude Code for accuracy, completeness, and consistency with the existing skill documentation before being accepted.
+   c. **Review the results.** If Claude makes mistakes, don't just fix the test — ask yourself *why* the skill documentation led it astray. Common causes:
+   - Missing or ambiguous option descriptions
+   - Gotchas that aren't documented
+   - Syntax examples that don't cover the use case
+
+   d. **Iterate.** Update your package docs based on what you learned, then re-run. The test should pass cleanly before you open a PR.
+
+   This feedback loop is how the skill improves — errors reveal gaps in the documentation that wouldn't be obvious just from reading it.
+
+6. **Open a pull request** with a brief description of the package and why it's useful. Include your test results. PRs will be reviewed by Claude Code for accuracy, completeness, and consistency with the existing skill documentation before being accepted.
 
 ## Guidelines
 
