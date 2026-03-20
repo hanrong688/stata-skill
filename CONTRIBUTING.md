@@ -74,7 +74,7 @@ Thanks for considering a contribution! The easiest way to help is by adding docu
    ./tests/scripts/run_pipeline.sh tests/tasks/your_task.md
    ```
 
-6. **Open a pull request** with a brief description of the package and why it's useful.
+6. **Open a pull request** with a brief description of the package and why it's useful. Note: PRs will be reviewed by Claude Code for accuracy, completeness, and consistency with the existing skill documentation before being accepted.
 
 ## Guidelines
 
