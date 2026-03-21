@@ -146,13 +146,16 @@ Output your evaluation in this exact format:
 """
 
 
-async def run_test(task_path: Path, model: str) -> dict:
+async def run_test(task_path: Path, model: str, no_skill: bool = False) -> dict:
     """Run a single test task and judge it. Returns structured results."""
     prompt = extract_task_prompt(task_path)
     rubric = RUBRIC_FILE.read_text()
     task_text = task_path.read_text()
 
-    # --- Step 1: Test agent (unlimited turns, skill auto-discovered via cwd) ---
+    # --- Step 1: Test agent ---
+    # With skill: cwd=REPO_ROOT so plugin auto-discovers via .claude-plugin/
+    # Without skill (--no-skill): cwd=/tmp so no plugin is loaded
+    test_cwd = "/tmp" if no_skill else str(REPO_ROOT)
     test_result = None
     test_transcript = ""
 
@@ -161,7 +164,7 @@ async def run_test(task_path: Path, model: str) -> dict:
         options=ClaudeAgentOptions(
             model=model,
             permission_mode="bypassPermissions",
-            cwd=str(REPO_ROOT),
+            cwd=test_cwd,
             system_prompt=(
                 "You are a Stata expert. Answer the user's Stata programming "
                 "question with correct, idiomatic code."
@@ -219,10 +222,13 @@ async def run_test(task_path: Path, model: str) -> dict:
     }
 
 
-async def run_single(task_path: Path, model: str, run_dir: Path) -> dict:
+async def run_single(
+    task_path: Path, model: str, run_dir: Path, no_skill: bool = False
+) -> dict:
     """Run a single test, save results, return the result dict."""
-    print(f"  Running: {task_path.name}")
-    result = await run_test(task_path, model)
+    label = "(no skill) " if no_skill else ""
+    print(f"  Running: {label}{task_path.name}")
+    result = await run_test(task_path, model, no_skill=no_skill)
 
     # Save artifacts (same layout as bash pipeline for compatibility)
     (run_dir / "task.md").write_text(task_path.read_text())
@@ -366,6 +372,11 @@ async def main():
         metavar="FILE",
         help="Save results summary to JSON (for use as future baseline)",
     )
+    parser.add_argument(
+        "--no-skill",
+        action="store_true",
+        help="Run without the skill loaded (baseline comparison)",
+    )
     args = parser.parse_args()
 
     task_paths = [Path(t).resolve() for t in args.tasks]
@@ -380,6 +391,8 @@ async def main():
 
     print(f"Model: {args.model}")
     print(f"Tasks: {len(task_paths)}, Runs per task: {args.runs}")
+    if args.no_skill:
+        print("Mode: NO SKILL (baseline — skill not loaded)")
     print()
 
     all_results = []
@@ -392,7 +405,7 @@ async def main():
             if args.runs > 1:
                 print(f"  [{run_idx + 1}/{args.runs}]", end=" ")
 
-            result = await run_single(task_path, args.model, run_dir)
+            result = await run_single(task_path, args.model, run_dir, no_skill=args.no_skill)
             task_results.append(result)
 
         all_results.extend(task_results)

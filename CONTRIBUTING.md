@@ -119,9 +119,19 @@ Thanks for considering a contribution! The easiest way to help is by adding docu
 - **Add a table of contents** to any file over 100 lines. Place a `## Contents` section after the H1 heading with markdown links to each H2 section.
 - **No personal info.** Don't include machine-specific paths, names, or credentials in examples. Use generic paths like `"$data/myfile.dta"`.
 
-## Improving Existing Docs
+## Other Ways to Contribute
 
-Found an error or want to add a missing option? PRs for existing files are welcome too. Keep changes focused and explain what you're fixing.
+### Report real-world issues
+
+If Claude gets something wrong while you're using the Stata skill in your own work, open an issue describing what happened. The most useful reports include: what you asked, what Claude got wrong, and which reference file was (or should have been) involved. Don't include your actual data or project details — describe the issue in the abstract. See `plugins/stata/skills/stata/references/filing-issues.md` for a template.
+
+### Suggest new tests
+
+The best test ideas come from real-world usage. If you hit a case where Claude struggled — wrong command, missing gotcha, bad option — turn it into a test task. Write a `tests/tasks/task_NN_description.md` following the existing format and open a PR. You don't need to fix the documentation yourself; a good test case that exposes the gap is valuable on its own. It goes into the eval pipeline and gives us a measurable target.
+
+### Improve existing docs
+
+Found an error or want to add a missing option? PRs for existing files are welcome. Keep changes focused and explain what you're fixing. If you can, run the eval pipeline before and after to show the improvement.
 
 ## Questions?
 

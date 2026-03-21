@@ -1,0 +1,82 @@
+[
+  {
+    "query": "I need to write a .do file that merges two datasets on county FIPS codes, reshapes from wide to long, and runs a fixed effects regression with clustered standard errors. The outcome variable is log_wage and I need to absorb both county and year FE.",
+    "should_trigger": true
+  },
+  {
+    "query": "can you help me use reghdfe to estimate a two-way fixed effects model? I have panel data with firm_id and year, and I want to cluster SEs at the firm level. also need to test if the coefficients on education and experience are jointly significant",
+    "should_trigger": true
+  },
+  {
+    "query": "my stata code keeps giving me weird results — I'm doing gen high_income = (income > 50000) but it's counting missing values as high income. what am I doing wrong and how do I fix it?",
+    "should_trigger": true
+  },
+  {
+    "query": "I want to run a difference-in-differences analysis with staggered treatment adoption. Some states adopted the policy in 2015, others in 2018, and I have a never-treated control group. Should I use the Callaway-Sant'Anna estimator or the Sun-Abraham approach?",
+    "should_trigger": true
+  },
+  {
+    "query": "write me a stata program that takes a varlist and runs a bootstrap with 500 replications for each variable, storing the results in a matrix. needs to handle the case where some variables have missing data",
+    "should_trigger": true
+  },
+  {
+    "query": "I have survey data from the NHANES and need to account for the complex survey design — strata, PSUs, and sampling weights. Can you write the svyset command and then run a logistic regression of diabetes on BMI, age, and race with proper survey adjustment?",
+    "should_trigger": true
+  },
+  {
+    "query": "how do i make a publication-quality coefficient plot in stata? I have 3 models stored with estimates store and want to show them side by side with 95% confidence intervals. need to export as PDF",
+    "should_trigger": true
+  },
+  {
+    "query": "I'm trying to use esttab to export my regression results to LaTeX but the standard errors keep showing up in the wrong format. I want stars at 1/5/10 percent and SEs in parentheses below the coefficients. Here's what I have so far but it's not working right",
+    "should_trigger": true
+  },
+  {
+    "query": "need to clean up a messy date variable in stata — it's stored as a string in formats like '03/15/2021', 'March 15, 2021', and '2021-03-15' all mixed together. how do I parse all three formats into a proper stata date?",
+    "should_trigger": true
+  },
+  {
+    "query": "I'm working on an RD design and need to estimate the treatment effect at the cutoff using rdrobust. The running variable is test_score with a cutoff at 70. I want both the sharp RD estimate and the rdplot visualization with the optimal bandwidth",
+    "should_trigger": true
+  },
+  {
+    "query": "can you write a python script that reads a CSV file, cleans the column names, and runs a fixed effects regression using statsmodels? I want to cluster standard errors at the firm level",
+    "should_trigger": false
+  },
+  {
+    "query": "I need to do a panel data analysis in R using the plm package. Can you help me set up a fixed effects model with the within estimator and run a Hausman test?",
+    "should_trigger": false
+  },
+  {
+    "query": "how do I run a logistic regression in python with scikit-learn? I have a binary outcome variable and want to do cross-validation to pick the best regularization parameter",
+    "should_trigger": false
+  },
+  {
+    "query": "write me a SQL query that joins two tables on county FIPS code and aggregates employment by year and state. I need a window function to calculate year-over-year growth rates",
+    "should_trigger": false
+  },
+  {
+    "query": "I need to create a C plugin for a performance-critical computation. The plugin needs to read data from Stata's data matrix via SF_vdata, process it in parallel using pthreads, and write results back with SF_vstore",
+    "should_trigger": false
+  },
+  {
+    "query": "can you help me build a random forest model in R? I want to use the ranger package for classification with probability estimation and then plot variable importance",
+    "should_trigger": false
+  },
+  {
+    "query": "I want to estimate a structural equation model — a mediation analysis where education affects wages through occupation, with a direct path too. Can you set this up in Mplus syntax?",
+    "should_trigger": false
+  },
+  {
+    "query": "help me write a bash script that downloads census data from the API, converts the JSON response to CSV, and then loads it into a postgres database with proper column types",
+    "should_trigger": false
+  },
+  {
+    "query": "I'm trying to do propensity score matching in julia using the CausalInference.jl package. Can you show me how to estimate the ATT with nearest-neighbor matching and check covariate balance?",
+    "should_trigger": false
+  },
+  {
+    "query": "write an excel VBA macro that runs a t-test on two columns of data and formats the results in a summary table on a new worksheet",
+    "should_trigger": false
+  }
+]
