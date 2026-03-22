@@ -133,6 +133,10 @@ The best test ideas come from real-world usage. If you hit a case where Claude s
 
 Found an error or want to add a missing option? PRs for existing files are welcome. Keep changes focused and explain what you're fixing. If you can, run the eval pipeline before and after to show the improvement.
 
+### Tackle a roadmap item
+
+See [`ROADMAP.md`](ROADMAP.md) for bigger-picture directions — things like building a real-world test suite, restructuring reference files, or adding dynamic help file access. These are open problems, not specifications. If any of them interest you, open an issue to discuss your approach before starting work.
+
 ## Questions?
 
 Open an issue if you're unsure about anything.
