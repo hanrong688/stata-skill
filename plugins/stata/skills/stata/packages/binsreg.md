@@ -299,9 +299,11 @@ binsreg wage education, deriv(1) line(2,2) cb(2,2) ///
 ```stata
 binsreg wage education, savedata(bindata) replace
 use bindata, clear
-* Variables: bins_x, bins_fit, bins_ci_l, bins_ci_r, bins_cb_l, bins_cb_r
-twoway (scatter bins_fit bins_x) ///
-       (rcap bins_ci_l bins_ci_r bins_x), ///
+* Variables: dots_x, dots_fit (bin-mean dots), poly_x, poly_fit (polynomial),
+*            CI_l, CI_r (pointwise CI), CB_l, CB_r (uniform CB)
+* With by(): each group gets suffix: dots_x_1, dots_x_2, etc.
+twoway (scatter dots_fit dots_x) ///
+       (rcap CI_l CI_r dots_x), ///
        title("Custom Binscatter")
 ```
 

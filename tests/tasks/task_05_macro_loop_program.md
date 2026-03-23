@@ -1,25 +1,31 @@
-# Task 05: Macros, Loops, and Programming
+# Task 05: Automated Regression Table Pipeline
 
 ## Task Prompt
 
-Using `sysuse auto`, write a do-file that:
-1. Define a local macro `outcomes` containing `price mpg weight`
-2. Define a local macro `controls` containing `i.foreign trunk turn`
-3. Loop over each outcome, regressing it on the controls with robust SEs
-4. Store each set of estimates with a meaningful name
-5. After the loop, create a comparison table using `estimates table`
-6. Then write a small Stata program `summarize_by` that takes a varlist and a `by()` option, and displays `tabstat` of those variables by the grouping variable
+Using `webuse nlswork`, I run the same model across different subgroups all the time and I'm sick of copy-pasting. Build me an automated pipeline:
+
+1. Define my specification: outcome is `ln_wage`, controls are `age c.age#c.age tenure hours i.race`. I want robust standard errors.
+
+2. Write a loop that estimates this model separately for each level of `collgrad` (college graduate vs not) and also for the full sample (3 models total). Store each set of estimates with a clear name.
+
+3. Export all three side-by-side in a single `esttab` table to both a `.csv` and a `.tex` file. I want standard errors in parentheses, stars at 10/5/1%, and clear column headers like "All", "No College", "College".
+
+4. Now make it reusable: write a Stata program called `subgroup_table` that takes a `varlist` (outcome), a required option `controls(string)`, a required option `by(varname)`, and an optional `export(string)` option. It should do the same thing — run the model for each level of the `by` variable plus the full sample, and if `export()` is specified, write the table there. Make sure it uses `syntax` properly.
+
+5. Test the program: call it with `ln_wage` as the outcome, the same controls, grouped by `race`, exporting to a file.
 
 ## Capabilities Exercised
 
-- **Gotcha: Local macro syntax** — backtick + single-quote `` `name' ``
-- **Programming basics:** `local`, `foreach`, `program define`, `syntax`
-- **Gotcha: Stored results overwritten** — must `estimates store` inside loop
-- **Linear regression:** `regress`, `vce(robust)`
-- **Advanced programming:** `syntax varlist, by(varname)`
+- Gotcha: local macro syntax — `` `name' `` backtick + single-quote
+- Programming: `local`, `foreach`, `levelsof`, `program define`, `syntax`
+- Gotcha: stored results overwritten — must `estimates store` inside loop
+- Packages: `estout`/`esttab` — formatting options, file export
+- Advanced programming: `syntax varlist, controls(string) by(varname) [export(string)]`
+- Gotcha: macros inside double quotes need compound quotes `"`macname'"` in some contexts
 
 ## Reference Files
 
 - references/programming-basics.md
 - references/advanced-programming.md
 - references/linear-regression.md
+- packages/estout.md

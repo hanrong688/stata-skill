@@ -5,6 +5,11 @@ Replaces the bash pipeline (run_test.sh → judge.sh) with a single script
 that tracks metrics (tokens, cost, time, score) and supports variance
 analysis and A/B comparison against baselines.
 
+Skill isolation: The test agent always runs with cwd=/tmp (neutral directory).
+The skill is loaded explicitly via the `plugins` parameter, not via cwd
+auto-discovery. This prevents repo context leakage (CLAUDE.md, test files, etc.)
+that would inflate scores beyond what a real user would see.
+
 Usage:
     # Single task
     python tests/eval.py tests/tasks/task_01_data_cleaning.md
@@ -15,8 +20,11 @@ Usage:
     # Variance analysis (run same task 3 times)
     python tests/eval.py tests/tasks/task_01_data_cleaning.md --runs 3
 
-    # Compare against a saved baseline
-    python tests/eval.py tests/tasks/task_*.md --compare tests/results/baseline.json
+    # Baseline without skill (staleness test)
+    python tests/eval.py tests/tasks/task_*.md --no-skill --save baseline_noskill.json
+
+    # A/B version comparison with alternative skill directory
+    python tests/eval.py tests/tasks/task_*.md --skill-path /path/to/v2 --compare baseline.json
 
     # Save results as a baseline for future comparisons
     python tests/eval.py tests/tasks/task_*.md --save tests/results/baseline.json
@@ -28,6 +36,7 @@ import json
 import re
 import statistics
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -36,6 +45,7 @@ from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUBRIC_FILE = REPO_ROOT / "tests" / "rubric.md"
 RESULTS_BASE = REPO_ROOT / "tests" / "results"
+RUNNER_ONLY_PLUGIN = REPO_ROOT / "tests" / "runner-only-plugin"
 
 # Default model for test + judge agents. Sonnet balances cost and quality
 # for repeated eval runs. Use --model claude-opus-4-6 for higher quality.
@@ -96,6 +106,40 @@ def create_run_dir() -> Path:
     raise RuntimeError("Could not allocate a run directory after 200 attempts")
 
 
+def collect_code_files(workdir: Path, start_time: float) -> dict[str, str]:
+    """Collect .do and .log files the test agent wrote.
+
+    Searches the workdir and /tmp (agents often write to /tmp directly).
+    Only includes files created after start_time to avoid picking up stale files.
+    """
+    files = {}
+    search_dirs = [workdir]
+    # Also search /tmp since agents often hardcode paths there
+    tmp = Path("/tmp")
+    if tmp != workdir and tmp.exists():
+        search_dirs.append(tmp)
+
+    for d in search_dirs:
+        for pattern in ("*.do", "*.log"):
+            for p in sorted(d.glob(pattern)):
+                try:
+                    if p.stat().st_mtime >= start_time:
+                        files[p.name] = p.read_text()
+                except Exception:
+                    pass
+    return files
+
+
+def format_code_files_section(code_files: dict[str, str]) -> str:
+    """Format collected code files into a section for the judge prompt."""
+    if not code_files:
+        return "(No .do or .log files were written to the working directory.)"
+    parts = []
+    for name, content in code_files.items():
+        parts.append(f"### {name}\n```stata\n{content}\n```")
+    return "\n\n".join(parts)
+
+
 JUDGE_PROMPT_TEMPLATE = """\
 You are a Stata code quality judge. Evaluate how well the agent responded \
 to a Stata programming task.
@@ -103,6 +147,16 @@ to a Stata programming task.
 Focus on Stata code quality, correctness, and idiomatic usage — NOT general \
 helpfulness or verbosity. Follow the rubric scoring instructions exactly, \
 including the weighted total formula.
+
+IMPORTANT: A good agent writes .do files and executes them rather than \
+dumping code into the chat window. The "Code Files Written" section below \
+contains the actual .do and .log files the agent created in its working \
+directory. Base your code quality evaluation primarily on these files. \
+The transcript shows the agent's chat output — use it for context on the \
+agent's reasoning, but the code files are the primary artifact to judge.
+
+If no code files were written AND no code appears in the transcript, \
+that is a failure — score accordingly.
 
 Output your evaluation in this exact format:
 
@@ -140,35 +194,43 @@ Output your evaluation in this exact format:
 
 {rubric}
 
+## Code Files Written
+
+{code_files}
+
 ## Agent Transcript
 
 {transcript}
 """
 
 
-async def run_test(task_path: Path, model: str, no_skill: bool = False) -> dict:
+async def run_test(
+    task_path: Path, model: str, no_skill: bool = False, skill_path: Path | None = None
+) -> dict:
     """Run a single test task and judge it. Returns structured results."""
     prompt = extract_task_prompt(task_path)
     rubric = RUBRIC_FILE.read_text()
     task_text = task_path.read_text()
 
     # --- Step 1: Test agent ---
-    # With skill: cwd=REPO_ROOT so plugin auto-discovers via .claude-plugin/
-    # Without skill (--no-skill): cwd=/tmp so no plugin is loaded
-    test_cwd = "/tmp" if no_skill else str(REPO_ROOT)
+    # Skill isolation: each test gets its own temp directory so the agent never
+    # auto-discovers the plugin or gets access to repo files. The skill is
+    # loaded explicitly via the plugins parameter when requested.
+    # The temp dir also lets us collect .do/.log files the agent writes.
+    plugin_path = skill_path or REPO_ROOT
+    test_plugins = [] if no_skill else [{"type": "local", "path": str(plugin_path)}]
     test_result = None
     test_transcript = ""
+    test_workdir = Path(tempfile.mkdtemp(prefix="stata_eval_"))
+    test_start_time = time.time()
 
     async for msg in query(
         prompt=prompt,
         options=ClaudeAgentOptions(
             model=model,
             permission_mode="bypassPermissions",
-            cwd=test_cwd,
-            system_prompt=(
-                "You are a Stata expert. Answer the user's Stata programming "
-                "question with correct, idiomatic code."
-            ),
+            cwd=str(test_workdir),
+            plugins=test_plugins,
         ),
     ):
         if isinstance(msg, ResultMessage):
@@ -178,10 +240,14 @@ async def run_test(task_path: Path, model: str, no_skill: bool = False) -> dict:
     if test_result is None:
         raise RuntimeError(f"No result from test agent for {task_path.name}")
 
+    # Collect code files the agent wrote
+    code_files = collect_code_files(test_workdir, test_start_time)
+
     # --- Step 2: Judge agent ---
     judge_prompt = JUDGE_PROMPT_TEMPLATE.format(
         task_text=task_text,
         rubric=rubric,
+        code_files=format_code_files_section(code_files),
         transcript=test_transcript,
     )
 
@@ -200,11 +266,20 @@ async def run_test(task_path: Path, model: str, no_skill: bool = False) -> dict:
             judge_result = msg
             judge_text = msg.result or ""
 
+    # Determine skill_mode for metadata
+    if no_skill:
+        skill_mode = "no_skill"
+    elif skill_path:
+        skill_mode = str(skill_path)
+    else:
+        skill_mode = "with_skill"
+
     return {
         "task": task_path.name,
         "score": extract_score(judge_text),
         "score_max": 55,
         "model": model,
+        "skill_mode": skill_mode,
         "test": {
             "duration_ms": test_result.duration_ms,
             "duration_api_ms": test_result.duration_api_ms,
@@ -213,6 +288,7 @@ async def run_test(task_path: Path, model: str, no_skill: bool = False) -> dict:
             "num_turns": test_result.num_turns,
             "is_error": test_result.is_error,
             "transcript": test_transcript,
+            "code_files": code_files,
         },
         "judge": {
             "duration_ms": judge_result.duration_ms if judge_result else None,
@@ -223,23 +299,41 @@ async def run_test(task_path: Path, model: str, no_skill: bool = False) -> dict:
 
 
 async def run_single(
-    task_path: Path, model: str, run_dir: Path, no_skill: bool = False
+    task_path: Path,
+    model: str,
+    run_dir: Path,
+    no_skill: bool = False,
+    skill_path: Path | None = None,
 ) -> dict:
     """Run a single test, save results, return the result dict."""
-    label = "(no skill) " if no_skill else ""
+    if no_skill:
+        label = "(no skill) "
+    elif skill_path:
+        label = f"(skill: {skill_path}) "
+    else:
+        label = ""
     print(f"  Running: {label}{task_path.name}")
-    result = await run_test(task_path, model, no_skill=no_skill)
+    result = await run_test(task_path, model, no_skill=no_skill, skill_path=skill_path)
 
-    # Save artifacts (same layout as bash pipeline for compatibility)
+    # Save artifacts
     (run_dir / "task.md").write_text(task_path.read_text())
     (run_dir / "transcript.json").write_text(
         json.dumps({"result": result["test"]["transcript"]}, indent=2)
     )
     (run_dir / "judge_findings.md").write_text(result["judge"]["findings"])
 
+    # Save code files the agent wrote
+    code_files = result["test"].get("code_files", {})
+    if code_files:
+        code_dir = run_dir / "code_files"
+        code_dir.mkdir(exist_ok=True)
+        for name, content in code_files.items():
+            (code_dir / name).write_text(content)
+
     metadata = {
         "task_file": result["task"],
         "model": result["model"],
+        "skill_mode": result["skill_mode"],
         "score": result["score"],
         "score_max": result["score_max"],
         "test_duration_ms": result["test"]["duration_ms"],
@@ -377,7 +471,30 @@ async def main():
         action="store_true",
         help="Run without the skill loaded (baseline comparison)",
     )
+    parser.add_argument(
+        "--skill-path",
+        type=Path,
+        metavar="DIR",
+        help="Path to an alternative skill plugin directory (for A/B version testing)",
+    )
+    parser.add_argument(
+        "--runner-only",
+        action="store_true",
+        help="Load only the Stata runner skill (execution instructions, no reference docs)",
+    )
     args = parser.parse_args()
+
+    exclusive_count = sum([args.no_skill, args.runner_only, args.skill_path is not None])
+    if exclusive_count > 1:
+        print(
+            "Error: --no-skill, --runner-only, and --skill-path are mutually exclusive",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Resolve --runner-only to --skill-path pointing at the runner-only plugin
+    if args.runner_only:
+        args.skill_path = RUNNER_ONLY_PLUGIN
 
     task_paths = [Path(t).resolve() for t in args.tasks]
     for tp in task_paths:
@@ -393,6 +510,12 @@ async def main():
     print(f"Tasks: {len(task_paths)}, Runs per task: {args.runs}")
     if args.no_skill:
         print("Mode: NO SKILL (baseline — skill not loaded)")
+    elif args.runner_only:
+        print("Mode: RUNNER ONLY (execution instructions, no reference docs)")
+    elif args.skill_path:
+        print(f"Mode: CUSTOM SKILL PATH ({args.skill_path})")
+    else:
+        print("Mode: WITH SKILL (plugin loaded via plugins parameter)")
     print()
 
     all_results = []
@@ -405,7 +528,10 @@ async def main():
             if args.runs > 1:
                 print(f"  [{run_idx + 1}/{args.runs}]", end=" ")
 
-            result = await run_single(task_path, args.model, run_dir, no_skill=args.no_skill)
+            result = await run_single(
+                task_path, args.model, run_dir,
+                no_skill=args.no_skill, skill_path=args.skill_path,
+            )
             task_results.append(result)
 
         all_results.extend(task_results)

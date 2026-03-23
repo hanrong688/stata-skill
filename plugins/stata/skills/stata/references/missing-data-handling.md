@@ -243,6 +243,9 @@ mi impute chained ///
 mi impute chained (...) ..., savetrace(trace, replace)
 
 use trace, clear
+* savetrace output has panel structure: m x iter
+* Must reshape before tsline
+reshape wide *_mean *_sd, i(iter) j(m)
 tsset iter
 tsline wage1 wage2 wage3, title("Trace plot: Wage")
 * Should look like random noise around mean
@@ -445,7 +448,7 @@ pwcorr wage age grade hours, obs
 regress wage age grade hours if !missing(wage)
 estimates store complete_case
 
-mi estimate: regress wage age grade hours
+mi estimate, post: regress wage age grade hours
 estimates store mi_est
 
 estimates table complete_case mi_est, b se
@@ -468,12 +471,12 @@ forvalues delta = 0(0.5)5 {
 ```stata
 * Compare: PMM few predictors, PMM many predictors, regression imputation
 mi impute pmm wage age grade, add(20) rseed(1) replace
-mi estimate: regress wage age grade
+mi estimate, post: regress wage age grade
 estimates store model1
 
 mi impute pmm wage age grade hours tenure i.race i.married, ///
     add(20) rseed(1) replace
-mi estimate: regress wage age grade
+mi estimate, post: regress wage age grade
 estimates store model2
 
 estimates table model1 model2, b se star
@@ -559,6 +562,9 @@ mi impute chained ///
 
 * 5. Check convergence
 use convergence, clear
+* savetrace output has panel structure: m x iter
+* Must reshape before tsline
+reshape wide *_mean *_sd, i(iter) j(m)
 tsset iter
 tsline wage1 wage2 wage3, title("Convergence: wage")
 

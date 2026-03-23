@@ -80,6 +80,8 @@ Both skills use **progressive disclosure**: a compact SKILL.md file loaded on ac
 
 ## Contributing
 
+This repo is also a good place to learn about building Claude Code skills. The [ROADMAP.md](ROADMAP.md) lists open problems around testing, progressive disclosure, and dynamic documentation that apply to skill development in general — not just Stata.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how to add documentation for new Stata packages. Pull requests welcome!
 
 ## Disclaimer

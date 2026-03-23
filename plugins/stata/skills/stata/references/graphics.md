@@ -103,6 +103,8 @@ graph box mpg, over(foreign) ///
     medtype(line) medline(lwidth(thick) lcolor(red))
 ```
 
+**GOTCHA: `graph box` is incompatible with `twoway`** — you cannot place `graph box` inside a `twoway` call or use `addplot()` with it. For overlaying jittered points on box plots, build boxes manually with `twoway rbar`/`rspike`/`scatter` primitives. The stats tempfile must be group-level (one row per group via `collapse`), not observation-level — merging observation-level data back as `m:1` causes `r(459)`.
+
 ---
 
 ## Histograms

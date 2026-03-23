@@ -186,6 +186,19 @@ estat teffects                              // All effects
 nlcom (indirect: _b[M:X] * _b[Y:M])       // Specific indirect effect
 ```
 
+**GOTCHA — `nlcom` clobbers `e()` results:**
+After `nlcom`, `e()` is overwritten. You must re-estimate the model before running `estat mindices`, `estat teffects`, or any other post-estimation command:
+```stata
+sem (paths...), standardized
+nlcom _b[Satisf:Quality] * _b[Loyalty:Satisf]  // indirect effect
+* e() is now gone — must re-estimate:
+quietly sem (paths...)
+estat mindices, minchi(3.84)  // now safe
+```
+
+**GOTCHA — indirect effects require unstandardized coefficients:**
+`nlcom _b[Y:X] * _b[Z:Y]` computes the product of path coefficients. This arithmetic is only valid with unstandardized coefficients. Do NOT include `, standardized` on the `sem` command when you plan to use `nlcom` for indirect effects.
+
 ---
 
 ## Mediation and Indirect Effects

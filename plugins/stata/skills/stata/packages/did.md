@@ -431,6 +431,13 @@ forvalues k = 0/10 {
 }
 ```
 
+**GOTCHA — event-study interaction syntax:**
+- Correct: `ib(-1).rel_time#1.treated` — base prefix goes on the factored variable
+- Wrong: `treated#ib(-1).rel_time` — produces wrong model or error
+- NEVER use hyphenated variable names for negative event times (e.g., `lead-3`). Stata parses `event-3` as `event MINUS 3`, not a variable name. Use: `local pre = abs(`k'); gen lead`pre' = (rel_time == -`k')`
+- Use `testparm` for testing negative factor levels, not `test` (which fails with negative levels)
+- Prefer factor notation (`i.rel_time#i.treated`) over manual dummies to avoid these issues entirely
+
 ### Binning Distant Endpoints
 
 ```stata

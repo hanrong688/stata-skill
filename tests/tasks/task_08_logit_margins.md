@@ -1,23 +1,36 @@
-# Task 08: Binary Outcome Model
+# Task 08: Treatment Effect Estimation
 
 ## Task Prompt
 
-Using `sysuse auto`:
-1. Run a logit model of `foreign` on `price`, `mpg`, `weight`, and `trunk`
-2. Report odds ratios
-3. Compute average marginal effects for each predictor
-4. Compute predicted probabilities for a car with mpg=25, weight=3000, trunk=15, price=6000
-5. Evaluate model fit using classification table and area under ROC curve
-6. Compare with a probit specification — are substantive conclusions similar?
+Using `webuse cattaneo2` (birthweight data), I want to estimate the effect of maternal smoking (`mbsmoke`) on low birthweight (`lbweight`).
+
+The problem is selection: smokers differ from non-smokers on observables. I want to see how sensitive the estimate is across methods:
+
+1. **Naive comparison:** Just compare mean `lbweight` between smokers and non-smokers. What's the raw difference?
+
+2. **Logit with controls:** Run a logit of `lbweight` on `mbsmoke` controlling for `mage`, `c.mage#c.mage`, `medu`, `mmarried`, `alcohol`, `fbaby`, `prenatal1`. Report odds ratios and average marginal effects.
+
+3. **IPW:** Use `teffects ipw` to estimate the ATE of `mbsmoke` on `lbweight`, with the same controls in the treatment model.
+
+4. **AIPW:** Use `teffects aipw` (doubly robust) with the same covariates in both the outcome and treatment models.
+
+5. **Comparison table:** Put all four estimates (raw diff, logit AME, IPW ATE, AIPW ATE) side by side. How much does selection bias account for? Are the estimates stable across methods?
+
+Don't just run the commands — I want to understand whether the overlap assumption is plausible. Show me a propensity score histogram by treatment group.
 
 ## Capabilities Exercised
 
-- **Limited dependent variables:** `logit`, `probit`, `or` (odds ratios)
-- **Post-estimation:** `margins`, `predict`, `estat classification`, `lroc`
-- **Command selection:** knowing when logit vs probit matters
-- **Gotcha: margins for nonlinear models** — marginal effects differ from coefficients
+- Treatment effects: `teffects ipw`, `teffects aipw`, ATE/ATT
+- Limited dependent variables: `logit`, `margins, dydx()`
+- Gotcha: margins for nonlinear models — AME ≠ coefficients
+- Gotcha: overlap/common support — propensity score distribution
+- Graphics: propensity score histogram
+- Diagnostics: comparing estimates across methods for robustness
 
 ## Reference Files
 
+- references/treatment-effects.md
 - references/limited-dependent-variables.md
-- references/linear-regression.md (for margins/predict patterns)
+- references/matching-methods.md
+- references/linear-regression.md
+- references/graphics.md

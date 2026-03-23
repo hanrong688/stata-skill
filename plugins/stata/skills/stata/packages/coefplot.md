@@ -331,6 +331,37 @@ esttab est1 est2 using "table.tex", ///
     label booktabs replace
 ```
 
+## Standardized Coefficients
+
+**Approach 1 — Rescale regressors before regression (simplest):**
+
+```stata
+preserve
+foreach v of varlist mpg weight length {
+    quietly summarize `v'
+    replace `v' = `v' / r(sd)
+}
+regress price mpg weight length foreign, vce(robust)
+coefplot, drop(_cons) horizontal xline(0) title("Standardized coefficients")
+restore
+```
+
+**Approach 2 — `ereturn post` inside eclass program (when you need stored estimates):**
+
+```stata
+program define _post_std, eclass
+    args bmat vmat nobs
+    ereturn post `bmat' `vmat', obs(`nobs') depname(price)
+    ereturn local cmd "regress"
+end
+
+// Build b_std (1×k) and V_std (k×k) matrices, then:
+_post_std b_std V_std `=_N'
+coefplot, horizontal drop(_cons) xline(0)
+```
+
+Note: `V_std` must be a k×k square matrix. Do NOT use `diag(vecdiag(rowvec))` — `vecdiag()` requires square input. Build with `J(k,k,0)` and fill the diagonal.
+
 ## Quick Reference
 
 | Option | Description |

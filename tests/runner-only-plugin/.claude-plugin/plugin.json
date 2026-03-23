@@ -1,0 +1,5 @@
+{
+  "name": "stata-runner",
+  "description": "Minimal Stata batch execution instructions only. No reference docs or Stata knowledge.",
+  "skills": ["skills/stata-runner"]
+}

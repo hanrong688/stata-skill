@@ -24,7 +24,9 @@
 ```stata
 * Install synth and synth_runner
 ssc install synth
-ssc install synth_runner
+
+* synth_runner is NOT on SSC — install from GitHub
+net install synth_runner, from("https://raw.githubusercontent.com/jgreathouse9/synth_runner/master/installation")
 
 * Update
 adoupdate synth, update
@@ -409,11 +411,14 @@ summarize pct_gap if _time < 1989
 ### Installation and Syntax
 
 ```stata
-ssc install synth_runner
+* synth_runner is NOT on SSC — install from GitHub
+net install synth_runner, from("https://raw.githubusercontent.com/jgreathouse9/synth_runner/master/installation")
 
 synth_runner depvar predvars(period) depvar(years), ///
     trunit(numlist|varname) trperiod(#|varname) [options]
 ```
+
+**Note:** If net install fails (network unavailable or URL changes), use the manual placebo loop pattern shown above.
 
 ### Multiple Treatment Units
 
