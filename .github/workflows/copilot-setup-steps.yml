@@ -1,0 +1,22 @@
+name: Copilot Setup Steps
+ 
+ on:
+   workflow_dispatch:
+   push:
+     paths:
+       - .github/workflows/copilot-setup-steps.yml
+   pull_request:
+     paths:
+       - .github/workflows/copilot-setup-steps.yml
+ 
+ jobs:
+   copilot-setup-steps:
+     runs-on: ubuntu-latest
+     permissions:
+       contents: read
+     steps:
+       - uses: actions/checkout@v5
+       - name: Prepare Stata skill docs for Copilot sessions
+         run: |
+           mkdir -p /opt/copilot-resources
+           cp -R "$GITHUB_WORKSPACE" /opt/copilot-resources/stata-skill
